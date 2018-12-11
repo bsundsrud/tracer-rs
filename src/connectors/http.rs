@@ -1,3 +1,4 @@
+use std::time::Duration;
 use dns::TracingResolver;
 use events::{Event, EventCollector};
 use futures::prelude::*;
@@ -25,8 +26,8 @@ impl TracingConnector {
 }
 
 impl Connect for TracingConnector {
-    type Transport = <HttpConnector<TracingResolver> as Connect>::Transport;
-    type Error = <HttpConnector<TracingResolver> as Connect>::Error;
+    type Transport = TcpStream;
+    type Error = std::io::Error;
     type Future = TracingConnecting;
 
     fn connect(&self, dst: Destination) -> Self::Future {
@@ -40,11 +41,29 @@ impl Connect for TracingConnector {
 }
 
 pub struct TracingConnecting {
+    collector: EventCollector,
+    nodelay: bool,
+    happy_eyeballs_timeout: Option<Duration>,
+    host: String,
+    port: u16,
+    resolver: TracingResolver,
+}
+
+impl Future for TracingConnecting {
+    Item = (TcpStream, Connected);
+    type Error = std::io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        
+    }
+}
+
+pub struct TracingConnectingOld {
     fut: Box<Future<Item = (TcpStream, Connected), Error = std::io::Error> + Send>,
     collector: EventCollector,
 }
 
-impl Future for TracingConnecting {
+impl Future for TracingConnectingOld {
     type Item = (TcpStream, Connected);
     type Error = std::io::Error;
 

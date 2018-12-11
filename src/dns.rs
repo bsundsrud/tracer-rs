@@ -2,9 +2,7 @@ use events::{Event, EventCollector};
 use futures_cpupool::{Builder as CpuPoolBuilder, CpuFuture, CpuPool};
 use hyper::client::connect::dns::Name;
 use hyper::client::connect::dns::Resolve;
-use std::net::IpAddr;
-use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 
 #[derive(Clone)]
 pub struct TracingResolver {
@@ -51,7 +49,26 @@ impl Resolve for TracingResolver {
     }
 }
 
+fn try_parse_ipaddr(host: &str) -> Option<IpAddrs> {
+    if let Ok(addr) = host.parse::<Ipv4Addr>() {
+        let addr = SocketAddrV4::new(addr, 0);
+        Some(IpAddrs {
+            inner: vec![SocketAddr::V4(addr)].into_iter(),
+        })
+    } else if let Ok(addr) = host.parse::<Ipv6Addr>() {
+        let addr = SocketAddrV6::new(addr, 0, 0, 0);
+        Some(IpAddrs {
+            inner: vec![SocketAddr::V6(addr)].into_iter(),
+        })
+    } else {
+        None
+    }
+}
+
 fn resolve(name: &str) -> Result<IpAddrs, std::io::Error> {
+    if let Some(addrs) = try_parse_ipaddr(&name) {
+        return Ok(addrs);
+    }
     (name, 0)
         .to_socket_addrs()
         .map(|sockets| IpAddrs { inner: sockets })
