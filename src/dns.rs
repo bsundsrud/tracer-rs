@@ -1,7 +1,6 @@
 use events::{Event, EventCollector};
+use futures::prelude::*;
 use futures_cpupool::{Builder as CpuPoolBuilder, CpuFuture, CpuPool};
-use hyper::client::connect::dns::Name;
-use hyper::client::connect::dns::Resolve;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 
 #[derive(Clone)]
@@ -32,20 +31,38 @@ impl TracingResolver {
             collector,
         }
     }
-}
 
-impl Resolve for TracingResolver {
-    type Addrs = IpAddrs;
-    type Future = CpuFuture<IpAddrs, std::io::Error>;
-
-    fn resolve(&self, name: Name) -> Self::Future {
+    pub fn resolve(&self, name: String) -> ResolveFuture {
+        if let Some(addrs) = try_parse_ipaddr(&name) {
+            return ResolveFuture::Ip(Some(addrs));
+        }
         let collector = self.collector.clone();
-        self.executor.spawn_fn(move || {
+        let fut = self.executor.spawn_fn(move || {
             collector.add(Event::DnsResolutionStarted);
-            let ipaddrs = resolve(name.as_str());
+            let ipaddrs = resolve(&name);
             collector.add(Event::DnsResolutionFinished);
             ipaddrs
-        })
+        });
+        ResolveFuture::Dns(fut)
+    }
+}
+
+pub enum ResolveFuture {
+    Ip(Option<IpAddrs>),
+    Dns(CpuFuture<IpAddrs, std::io::Error>),
+}
+
+impl Future for ResolveFuture {
+    type Item = IpAddrs;
+    type Error = std::io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match *self {
+            ResolveFuture::Ip(ref mut ip) => {
+                Ok(Async::Ready(ip.take().expect("polled more than once")))
+            }
+            ResolveFuture::Dns(ref mut fut) => fut.poll(),
+        }
     }
 }
 
@@ -66,9 +83,6 @@ fn try_parse_ipaddr(host: &str) -> Option<IpAddrs> {
 }
 
 fn resolve(name: &str) -> Result<IpAddrs, std::io::Error> {
-    if let Some(addrs) = try_parse_ipaddr(&name) {
-        return Ok(addrs);
-    }
     (name, 0)
         .to_socket_addrs()
         .map(|sockets| IpAddrs { inner: sockets })

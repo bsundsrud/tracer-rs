@@ -7,11 +7,13 @@ pub enum Event {
     Initiated,
     DnsResolutionStarted,
     DnsResolutionFinished,
+    ConnectionStarted,
     Connected,
     TlsNegotiationStarted,
     TlsNegotiated,
     HeadersReceived,
     FullResponse,
+    ConnectionError,
 }
 
 #[derive(Debug)]
@@ -33,7 +35,7 @@ impl EventCollector {
         collector.push((e, Instant::now()));
     }
 
-    fn drain_events(&self) -> Vec<(Event, Instant)> {
+    pub fn drain_events(&self) -> Vec<(Event, Instant)> {
         let collector = self.0.clone();
         let mut r = Vec::new();
         while let Some((e, t)) = collector.try_pop() {
@@ -66,6 +68,7 @@ impl EventCollector {
                 } else {
                     Some(None)
                 }
-            }).filter_map(|opt| opt) // Unwrap a layer from above, ignoring any `None` elements
+            })
+            .filter_map(|opt| opt) // Unwrap a layer from above, ignoring any `None` elements
     }
 }

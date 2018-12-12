@@ -1,27 +1,34 @@
-use std::time::Duration;
+use dns::ResolveFuture;
 use dns::TracingResolver;
 use events::{Event, EventCollector};
 use futures::prelude::*;
 use hyper::client::connect::Connect;
 use hyper::client::connect::Connected;
 use hyper::client::connect::Destination;
-use hyper::client::HttpConnector;
+use std::io;
+use std::net::SocketAddr;
+use tokio_tcp::ConnectFuture;
 use tokio_tcp::TcpStream;
 
+#[derive(Clone)]
 pub struct TracingConnector {
-    http: HttpConnector<TracingResolver>,
+    resolver: TracingResolver,
     collector: EventCollector,
+    nodelay: bool,
 }
 
 impl TracingConnector {
     pub fn new(threads: usize, collector: EventCollector) -> TracingConnector {
         let resolver = TracingResolver::new(threads, collector.clone());
-        let http = HttpConnector::new_with_resolver(resolver);
-        TracingConnector { http, collector }
+        TracingConnector {
+            resolver,
+            collector,
+            nodelay: false,
+        }
     }
 
-    pub fn connector(&mut self) -> &mut HttpConnector<TracingResolver> {
-        &mut self.http
+    pub fn set_nodelay(&mut self, nodelay: bool) {
+        self.nodelay = nodelay;
     }
 }
 
@@ -31,50 +38,82 @@ impl Connect for TracingConnector {
     type Future = TracingConnecting;
 
     fn connect(&self, dst: Destination) -> Self::Future {
-        let conn = self.http.connect(dst);
-
+        let host = match dst.host() {
+            "" => {
+                return TracingConnecting {
+                    collector: self.collector.clone(),
+                    nodelay: self.nodelay,
+                    port: 0,
+                    state: invalid_url(),
+                };
+            }
+            host => host.to_string(),
+        };
+        let is_https = dst.scheme() == "https";
+        let port = dst
+            .port()
+            .unwrap_or_else(|| if is_https { 443 } else { 80 });
         TracingConnecting {
-            fut: Box::new(conn),
             collector: self.collector.clone(),
+            nodelay: self.nodelay,
+            port,
+            state: State::Resolving(self.resolver.resolve(host)),
         }
     }
+}
+
+fn invalid_url() -> State {
+    State::Error(Some(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "Did not resolve an address",
+    )))
 }
 
 pub struct TracingConnecting {
     collector: EventCollector,
     nodelay: bool,
-    happy_eyeballs_timeout: Option<Duration>,
-    host: String,
     port: u16,
-    resolver: TracingResolver,
+    state: State,
+}
+
+enum State {
+    Resolving(ResolveFuture),
+    Connecting(ConnectFuture),
+    Error(Option<std::io::Error>),
 }
 
 impl Future for TracingConnecting {
-    Item = (TcpStream, Connected);
-    type Error = std::io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        
-    }
-}
-
-pub struct TracingConnectingOld {
-    fut: Box<Future<Item = (TcpStream, Connected), Error = std::io::Error> + Send>,
-    collector: EventCollector,
-}
-
-impl Future for TracingConnectingOld {
     type Item = (TcpStream, Connected);
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let val = match self.fut.poll()? {
-            Async::NotReady => Async::NotReady,
-            Async::Ready(v) => {
-                self.collector.add(Event::Connected);
-                Async::Ready(v)
+        loop {
+            let state;
+            match self.state {
+                State::Resolving(ref mut r) => match r.poll()? {
+                    Async::NotReady => return Ok(Async::NotReady),
+                    Async::Ready(addrs) => {
+                        let port = self.port;
+                        let addr = addrs.map(|a| SocketAddr::new(a, port)).next();
+                        state = match addr {
+                            Some(a) => State::Connecting(TcpStream::connect(&a)),
+                            None => invalid_url(),
+                        };
+                        self.collector.add(Event::ConnectionStarted);
+                    }
+                },
+                State::Connecting(ref mut fut) => match fut.poll()? {
+                    Async::NotReady => return Ok(Async::NotReady),
+                    Async::Ready(stream) => {
+                        stream.set_nodelay(self.nodelay)?;
+                        let connected = Connected::new();
+                        self.collector.add(Event::Connected);
+                        return Ok(Async::Ready((stream, connected)));
+                    }
+                },
+                State::Error(ref mut e) => return Err(e.take().expect("polled more than once")),
             }
-        };
-        Ok(val)
+            self.state = state;
+        }
     }
 }

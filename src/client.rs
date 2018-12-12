@@ -5,10 +5,13 @@ use futures::prelude::*;
 use hyper::body::Payload;
 use hyper::client::connect::Connect;
 use hyper::client::Client as HyperClient;
+use hyper::http::response::Parts;
 use hyper::http::{Request, Response};
 use hyper::Body;
+use hyper::Chunk;
 use hyper::Error as HyperError;
 use std::fmt;
+use tokio::prelude::stream::Concat2;
 
 pub struct Client<C, B> {
     client: HyperClient<C, B>,
@@ -24,7 +27,7 @@ impl Client<TracingHttpsConnector, Body> {
 impl Default for Client<TracingHttpsConnector, Body> {
     fn default() -> Client<TracingHttpsConnector, Body> {
         let collector = EventCollector::new();
-        let connector = TracingHttpsConnector::new(4, collector.clone());
+        let connector = TracingHttpsConnector::new(false, 4, collector.clone());
         let client = HyperClient::builder().keep_alive(false).build(connector);
         Client { client, collector }
     }
@@ -53,18 +56,38 @@ where
         let fut = start
             .then(|_| send)
             .inspect(move |_resp| collector2.add(Event::HeadersReceived));
-        ResponseFuture::new(Box::new(fut))
+        ResponseFuture::new(Box::new(fut), self.collector.clone())
     }
 }
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: Box<Future<Item = Response<Body>, Error = HyperError> + Send>,
+    collector: EventCollector,
 }
 
 impl ResponseFuture {
-    fn new(fut: Box<Future<Item = Response<Body>, Error = HyperError> + Send>) -> Self {
-        Self { inner: fut }
+    fn new(
+        fut: Box<Future<Item = Response<Body>, Error = HyperError> + Send>,
+        collector: EventCollector,
+    ) -> Self {
+        Self {
+            inner: fut,
+            collector,
+        }
+    }
+
+    pub fn full_response(
+        self,
+    ) -> impl Future<Item = (Parts, Chunk, EventCollector), Error = HyperError> {
+        self.and_then(|(res, collector)| {
+            let (parts, body) = res.into_parts();
+            FullResponseFuture {
+                collector,
+                parts: Some(parts),
+                body: body.concat2(),
+            }
+        })
     }
 }
 
@@ -75,11 +98,53 @@ impl fmt::Debug for ResponseFuture {
 }
 
 impl Future for ResponseFuture {
-    type Item = Response<Body>;
+    type Item = (Response<Body>, EventCollector);
     type Error = HyperError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
+        match self.inner.poll() {
+            Ok(v) => match v {
+                Async::Ready(v) => Ok(Async::Ready((v, self.collector.clone()))),
+                Async::NotReady => Ok(Async::NotReady),
+            },
+            Err(e) => {
+                self.collector.add(Event::ConnectionError);
+                Err(e)
+            }
+        }
+    }
+}
+
+#[must_use = "futures do nothing unless polled"]
+pub struct FullResponseFuture {
+    collector: EventCollector,
+    parts: Option<Parts>,
+    body: Concat2<Body>,
+}
+
+impl fmt::Debug for FullResponseFuture {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad("Future<(Parts, Chunk)>")
+    }
+}
+
+impl Future for FullResponseFuture {
+    type Item = (Parts, Chunk, EventCollector);
+    type Error = HyperError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let val = match self.body.poll()? {
+            Async::NotReady => Async::NotReady,
+            Async::Ready(c) => {
+                self.collector.add(Event::FullResponse);
+                Async::Ready((
+                    self.parts.take().expect("polled more than once"),
+                    c,
+                    self.collector.clone(),
+                ))
+            }
+        };
+        Ok(val)
     }
 }
 
@@ -89,36 +154,26 @@ mod test {
     #[test]
     fn client_test() {
         let c = Client::new();
-        let collector = c.collector();
         let req = Request::builder()
-            .method("GET")
-            .uri("https://www.google.com")
+            .uri("https://badssl.com/")
             .body(Body::empty())
             .unwrap();
-        let fut = c
-            .request(req)
-            .and_then(|res: Response<_>| {
-                println!("status: {}", res.status());
-                res.headers().iter().for_each(|(k, v)| {
+        let fut = c.request(req).full_response();
+        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        match rt.block_on(fut) {
+            Ok((res, body, collector)) => {
+                println!("status: {}", res.status);
+                res.headers.iter().for_each(|(k, v)| {
                     println!("{:?}: {:?}", k, v);
                 });
-                res.into_body().concat2()
-            })
-            .and_then(|body| {
                 println!("Length: {}", body.len());
-                Ok(())
-            })
-            .inspect(move |_| {
-                collector.add(Event::FullResponse);
                 collector.since_initiated().for_each(|(e, d)| {
                     println!("{:?}: {:?}", e, d);
                 });
-            })
-            .map_err(|e| {
-                println!("Error: {}", e);
-            });
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        rt.spawn(fut);
+            }
+            Err(e) => println!("ERROR: {}", e),
+        }
+
         rt.shutdown_on_idle().wait().unwrap();
     }
 }
