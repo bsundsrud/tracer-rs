@@ -27,7 +27,7 @@ impl Client<TracingHttpsConnector, Body> {
 impl Default for Client<TracingHttpsConnector, Body> {
     fn default() -> Client<TracingHttpsConnector, Body> {
         let collector = EventCollector::new();
-        let connector = TracingHttpsConnector::new(false, 4, collector.clone());
+        let connector = TracingHttpsConnector::new(true, 4, collector.clone());
         let client = HyperClient::builder().keep_alive(false).build(connector);
         Client { client, collector }
     }
@@ -163,7 +163,8 @@ mod test {
                     println!("{:?}: {:?}", k, v);
                 });
                 println!("Length: {}", body.len());
-                collector.since_initiated().for_each(|(e, d)| {
+                let events = collector.drain_events();
+                events.since_initiated().for_each(|(e, d)| {
                     println!("{:?}: {:?}", e, d);
                 });
             }

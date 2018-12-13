@@ -5,4 +5,4 @@ pub mod dns;
 pub mod events;
 
 pub use crate::client::Client;
-pub use crate::events::{Event, EventCollector};
+pub use crate::events::{Event, EventCollector, EventSet};
