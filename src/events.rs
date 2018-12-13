@@ -16,7 +16,7 @@ pub enum Event {
     ConnectionError,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct EventCollector(Arc<SegQueue<(Event, Instant)>>);
 
 impl Clone for EventCollector {
