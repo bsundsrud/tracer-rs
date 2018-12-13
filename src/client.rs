@@ -47,15 +47,11 @@ where
 
     pub fn request(&self, req: Request<B>) -> ResponseFuture {
         let collector = self.collector.clone();
-        let collector2 = self.collector.clone();
-        let start = future::lazy(move || {
-            collector.add(Event::Initiated);
-            future::ok::<(), ()>(())
-        });
         let send = self.client.request(req);
-        let fut = start
-            .then(|_| send)
-            .inspect(move |_resp| collector2.add(Event::HeadersReceived));
+        let fut = future::lazy(move || {
+            collector.add(Event::Initiated);
+            send.inspect(move |_resp| collector.add(Event::HeadersReceived))
+        });
         ResponseFuture::new(Box::new(fut), self.collector.clone())
     }
 }
