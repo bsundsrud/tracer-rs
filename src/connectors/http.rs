@@ -1,6 +1,6 @@
-use dns::ResolveFuture;
-use dns::TracingResolver;
-use events::{Event, EventCollector};
+use crate::dns::ResolveFuture;
+use crate::dns::TracingResolver;
+use crate::events::{Event, EventCollector};
 use futures::prelude::*;
 use hyper::client::connect::Connect;
 use hyper::client::connect::Connected;

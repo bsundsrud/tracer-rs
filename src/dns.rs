@@ -1,4 +1,4 @@
-use events::{Event, EventCollector};
+use crate::events::{Event, EventCollector};
 use futures::prelude::*;
 use futures_cpupool::{Builder as CpuPoolBuilder, CpuFuture, CpuPool};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};

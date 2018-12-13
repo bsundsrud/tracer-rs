@@ -1,5 +1,5 @@
 use super::http::TracingConnector;
-use events::{Event, EventCollector};
+use crate::events::{Event, EventCollector};
 use futures::prelude::*;
 use hyper::client::connect::Connect;
 use hyper::client::connect::Connected;

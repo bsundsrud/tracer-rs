@@ -1,5 +1,5 @@
-use connectors::TracingHttpsConnector;
-use events::{Event, EventCollector};
+use crate::connectors::TracingHttpsConnector;
+use crate::events::{Event, EventCollector};
 use futures::future;
 use futures::prelude::*;
 use hyper::body::Payload;
