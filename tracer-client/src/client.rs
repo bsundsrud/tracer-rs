@@ -1,5 +1,4 @@
 use crate::connectors::TracingHttpsConnector;
-use crate::events::{Event, EventCollector};
 use futures::future;
 use futures::prelude::*;
 use hyper::body::Payload;
@@ -12,10 +11,27 @@ use hyper::Chunk;
 use hyper::Error as HyperError;
 use std::fmt;
 use tokio::prelude::stream::Concat2;
+use tracer_metrics::{Collector, CollectorHandle, Interest, Stopwatch};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Metric {
+    Dns,
+    Connection,
+    Tls,
+    Headers,
+    FullResponse,
+}
+
+impl fmt::Display for Metric {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", &self)?;
+        Ok(())
+    }
+}
 
 pub struct Client<C, B> {
     client: HyperClient<C, B>,
-    collector: EventCollector,
+    collector: Collector<Metric>,
 }
 
 impl Client<TracingHttpsConnector, Body> {
@@ -26,8 +42,26 @@ impl Client<TracingHttpsConnector, Body> {
 
 impl Default for Client<TracingHttpsConnector, Body> {
     fn default() -> Client<TracingHttpsConnector, Body> {
-        let collector = EventCollector::new();
-        let connector = TracingHttpsConnector::new(true, 4, collector.clone());
+        let mut collector = Collector::new();
+        collector.register(Interest::Count(Metric::Connection));
+        collector.register(Interest::Count(Metric::Dns));
+        collector.register(Interest::Count(Metric::Tls));
+        collector.register(Interest::Count(Metric::Headers));
+        collector.register(Interest::Count(Metric::FullResponse));
+
+        collector.register(Interest::LatencyPercentile(Metric::Connection));
+        collector.register(Interest::LatencyPercentile(Metric::Dns));
+        collector.register(Interest::LatencyPercentile(Metric::Tls));
+        collector.register(Interest::LatencyPercentile(Metric::Headers));
+        collector.register(Interest::LatencyPercentile(Metric::FullResponse));
+
+        collector.register(Interest::Gauge(Metric::Connection));
+        collector.register(Interest::Gauge(Metric::Dns));
+        collector.register(Interest::Gauge(Metric::Tls));
+        collector.register(Interest::Gauge(Metric::Headers));
+        collector.register(Interest::Gauge(Metric::FullResponse));
+
+        let connector = TracingHttpsConnector::new(true, 4, collector.handle());
         let client = HyperClient::builder().keep_alive(false).build(connector);
         Client { client, collector }
     }
@@ -41,31 +75,39 @@ where
     B: Payload + Send + 'static,
     B::Data: Send,
 {
-    pub fn collector(&self) -> EventCollector {
-        self.collector.clone()
+    pub fn collector(&self) -> &Collector<Metric> {
+        &self.collector
+    }
+
+    pub fn collector_mut(&mut self) -> &mut Collector<Metric> {
+        &mut self.collector
     }
 
     pub fn request(&self, req: Request<B>) -> ResponseFuture {
-        let collector = self.collector.clone();
+        let collector = self.collector.handle();
+        let handle = collector.clone();
         let send = self.client.request(req);
         let fut = future::lazy(move || {
-            collector.add(Event::Initiated);
-            send.inspect(move |_resp| collector.add(Event::HeadersReceived))
+            let stopwatch = Stopwatch::new();
+            send.map(move |resp| {
+                handle.send(stopwatch.elapsed(Metric::Headers));
+                (resp, stopwatch)
+            })
         });
-        ResponseFuture::new(Box::new(fut), self.collector.clone())
+        ResponseFuture::new(Box::new(fut), collector)
     }
 }
 
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
-    inner: Box<Future<Item = Response<Body>, Error = HyperError> + Send>,
-    collector: EventCollector,
+    inner: Box<Future<Item = (Response<Body>, Stopwatch), Error = HyperError> + Send>,
+    collector: CollectorHandle<Metric>,
 }
 
 impl ResponseFuture {
     fn new(
-        fut: Box<Future<Item = Response<Body>, Error = HyperError> + Send>,
-        collector: EventCollector,
+        fut: Box<Future<Item = (Response<Body>, Stopwatch), Error = HyperError> + Send>,
+        collector: CollectorHandle<Metric>,
     ) -> Self {
         Self {
             inner: fut,
@@ -73,13 +115,13 @@ impl ResponseFuture {
         }
     }
 
-    pub fn full_response(
-        self,
-    ) -> impl Future<Item = (Parts, Chunk, EventCollector), Error = HyperError> {
-        self.and_then(|(res, collector)| {
+    pub fn full_response(self) -> impl Future<Item = (Parts, Chunk), Error = HyperError> {
+        let collector = self.collector.clone();
+        self.and_then(|(res, stopwatch)| {
             let (parts, body) = res.into_parts();
             FullResponseFuture {
-                collector,
+                stopwatch,
+                collector: collector,
                 parts: Some(parts),
                 body: body.concat2(),
             }
@@ -94,26 +136,18 @@ impl fmt::Debug for ResponseFuture {
 }
 
 impl Future for ResponseFuture {
-    type Item = (Response<Body>, EventCollector);
+    type Item = (Response<Body>, Stopwatch);
     type Error = HyperError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match self.inner.poll() {
-            Ok(v) => match v {
-                Async::Ready(v) => Ok(Async::Ready((v, self.collector.clone()))),
-                Async::NotReady => Ok(Async::NotReady),
-            },
-            Err(e) => {
-                self.collector.add(Event::ConnectionError);
-                Err(e)
-            }
-        }
+        self.inner.poll()
     }
 }
 
 #[must_use = "futures do nothing unless polled"]
 pub struct FullResponseFuture {
-    collector: EventCollector,
+    stopwatch: Stopwatch,
+    collector: CollectorHandle<Metric>,
     parts: Option<Parts>,
     body: Concat2<Body>,
 }
@@ -125,19 +159,16 @@ impl fmt::Debug for FullResponseFuture {
 }
 
 impl Future for FullResponseFuture {
-    type Item = (Parts, Chunk, EventCollector);
+    type Item = (Parts, Chunk);
     type Error = HyperError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let val = match self.body.poll()? {
             Async::NotReady => Async::NotReady,
             Async::Ready(c) => {
-                self.collector.add(Event::FullResponse);
-                Async::Ready((
-                    self.parts.take().expect("polled more than once"),
-                    c,
-                    self.collector.clone(),
-                ))
+                self.collector
+                    .send(self.stopwatch.elapsed(Metric::FullResponse));
+                Async::Ready((self.parts.take().expect("polled more than once"), c))
             }
         };
         Ok(val)
@@ -149,24 +180,23 @@ mod test {
     use super::*;
     #[test]
     fn client_test() {
-        let c = Client::new();
+        let mut c = Client::new();
         let req = Request::builder()
             .uri("https://badssl.com/")
             .body(Body::empty())
             .unwrap();
         let fut = c.request(req).full_response();
+        let collector = c.collector_mut();
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         match rt.block_on(fut) {
-            Ok((res, body, collector)) => {
+            Ok((res, body)) => {
                 println!("status: {}", res.status);
                 res.headers.iter().for_each(|(k, v)| {
                     println!("{:?}: {:?}", k, v);
                 });
                 println!("Length: {}", body.len());
-                let events = collector.drain_events();
-                events.since_initiated().for_each(|(e, d)| {
-                    println!("{:?}: {:?}", e, d);
-                });
+
+                collector.process_outstanding();
             }
             Err(e) => println!("ERROR: {}", e),
         }

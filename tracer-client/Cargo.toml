@@ -1,0 +1,23 @@
+[package]
+name = "tracer-client"
+version = "0.1.0"
+authors = ["Benn Sundsrud <benn.sundsrud@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+futures = "^0.1"
+tokio-reactor = "*"
+tokio-tcp = "*"
+tokio = "*"
+rustls = "*"
+log = "*"
+failure = "*"
+http = "*"
+webpki = "*"
+webpki-roots = "*"
+hyper = "*"
+tokio-rustls = "*"
+hyper-rustls = "*"
+futures-cpupool = "*"
+crossbeam = "*"
+tracer-metrics = { path = "../tracer-metrics" }

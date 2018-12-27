@@ -1,0 +1,21 @@
+[package]
+name = "tracer"
+version = "0.1.0"
+authors = ["Benn Sundsrud <benn.sundsrud@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tracer-client = { path = "../tracer-client" }
+hyper = "*"
+failure = "*"
+clap = "*"
+slog = "*"
+slog-term = "*"
+slog-async = "*"
+toml = "*"
+serde = "*"
+serde_derive = "*"
+futures = "^0.1"
+tokio = "*"
+http = "*"
+sha2 = "*"

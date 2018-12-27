@@ -1,5 +1,5 @@
 use super::http::TracingConnector;
-use crate::events::{Event, EventCollector};
+use crate::client::Metric;
 use futures::prelude::*;
 use hyper::client::connect::Connect;
 use hyper::client::connect::Connected;
@@ -11,17 +11,22 @@ use std::convert::From;
 use std::io;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
+use tracer_metrics::{CollectorHandle, Stopwatch};
 use webpki::{DNSName, DNSNameRef};
 
 #[derive(Clone)]
 pub struct TracingHttpsConnector {
     http: TracingConnector,
     tls_config: Arc<ClientConfig>,
-    collector: EventCollector,
+    collector: CollectorHandle<Metric>,
 }
 
 impl TracingHttpsConnector {
-    pub fn new(nodelay: bool, threads: usize, collector: EventCollector) -> TracingHttpsConnector {
+    pub fn new(
+        nodelay: bool,
+        threads: usize,
+        collector: CollectorHandle<Metric>,
+    ) -> TracingHttpsConnector {
         let mut http = TracingConnector::new(threads, collector.clone());
         http.set_nodelay(nodelay);
         let mut config = ClientConfig::new();
@@ -36,8 +41,10 @@ impl TracingHttpsConnector {
     }
 }
 
-impl From<(TracingConnector, ClientConfig, EventCollector)> for TracingHttpsConnector {
-    fn from(args: (TracingConnector, ClientConfig, EventCollector)) -> TracingHttpsConnector {
+impl From<(TracingConnector, ClientConfig, CollectorHandle<Metric>)> for TracingHttpsConnector {
+    fn from(
+        args: (TracingConnector, ClientConfig, CollectorHandle<Metric>),
+    ) -> TracingHttpsConnector {
         TracingHttpsConnector {
             http: args.0,
             tls_config: Arc::new(args.1),
@@ -55,13 +62,13 @@ impl Connect for TracingHttpsConnector {
         let is_https = dst.scheme() == "https";
         let hostname = dst.host().to_string();
         let connecting = self.http.connect(dst);
+        let collector = self.collector.clone();
         if !is_https {
             let fut = connecting.map(|(tcp, conn)| (MaybeHttpsStream::Http(tcp), conn));
             TracingHttpsConnecting(Box::new(fut))
         } else {
             let cfg = self.tls_config.clone();
             let connector = TlsConnector::from(cfg);
-            let collector = self.collector.clone();
             let fut = connecting
                 .map(|(tcp, conn)| (tcp, conn, hostname))
                 .and_then(
@@ -71,11 +78,10 @@ impl Connect for TracingHttpsConnector {
                     },
                 )
                 .and_then(move |(tcp, conn, dnsname)| {
-                    collector.add(Event::TlsNegotiationStarted);
-                    let collector = collector.clone();
+                    let stopwatch = Stopwatch::new();
                     connector
                         .connect(dnsname.as_ref(), tcp)
-                        .inspect(move |_| collector.add(Event::TlsNegotiated))
+                        .inspect(move |_| collector.send(stopwatch.elapsed(Metric::Tls)))
                         .and_then(|tls| Ok((MaybeHttpsStream::Https(tls), conn)))
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
                 });

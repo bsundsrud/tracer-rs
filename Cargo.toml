@@ -1,22 +1,12 @@
-[package]
-name = "tracer"
-version = "0.1.0"
-authors = ["Benn Sundsrud <benn.sundsrud@gmail.com>"]
-edition = "2018"
+[workspace]
+members = [
+        "tracer-client",
+        "tracer-metrics",
+        "tracer-bin"
+]
 
-[dependencies]
-futures = "^0.1"
-tokio-reactor = "*"
-tokio-tcp = "*"
-tokio = "*"
-rustls = "*"
-log = "*"
-failure = "*"
-http = "*"
-webpki = "*"
-webpki-roots = "*"
-hyper = "*"
-tokio-rustls = "*"
-hyper-rustls = "*"
-futures-cpupool = "*"
-crossbeam = "*"
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+incremental = false

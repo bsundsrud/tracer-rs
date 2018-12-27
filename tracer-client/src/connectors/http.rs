@@ -1,6 +1,6 @@
+use crate::client::Metric;
 use crate::dns::ResolveFuture;
 use crate::dns::TracingResolver;
-use crate::events::{Event, EventCollector};
 use futures::prelude::*;
 use hyper::client::connect::Connect;
 use hyper::client::connect::Connected;
@@ -9,16 +9,17 @@ use std::io;
 use std::net::SocketAddr;
 use tokio_tcp::ConnectFuture;
 use tokio_tcp::TcpStream;
+use tracer_metrics::{CollectorHandle, Stopwatch};
 
 #[derive(Clone)]
 pub struct TracingConnector {
     resolver: TracingResolver,
-    collector: EventCollector,
+    collector: CollectorHandle<Metric>,
     nodelay: bool,
 }
 
 impl TracingConnector {
-    pub fn new(threads: usize, collector: EventCollector) -> TracingConnector {
+    pub fn new(threads: usize, collector: CollectorHandle<Metric>) -> TracingConnector {
         let resolver = TracingResolver::new(threads, collector.clone());
         TracingConnector {
             resolver,
@@ -70,7 +71,7 @@ fn invalid_url() -> State {
 }
 
 pub struct TracingConnecting {
-    collector: EventCollector,
+    collector: CollectorHandle<Metric>,
     nodelay: bool,
     port: u16,
     state: State,
@@ -78,7 +79,7 @@ pub struct TracingConnecting {
 
 enum State {
     Resolving(ResolveFuture),
-    Connecting(ConnectFuture),
+    Connecting(ConnectFuture, Stopwatch),
     Error(Option<std::io::Error>),
 }
 
@@ -96,18 +97,17 @@ impl Future for TracingConnecting {
                         let port = self.port;
                         let addr = addrs.map(|a| SocketAddr::new(a, port)).next();
                         state = match addr {
-                            Some(a) => State::Connecting(TcpStream::connect(&a)),
+                            Some(a) => State::Connecting(TcpStream::connect(&a), Stopwatch::new()),
                             None => invalid_url(),
                         };
-                        self.collector.add(Event::ConnectionStarted);
                     }
                 },
-                State::Connecting(ref mut fut) => match fut.poll()? {
+                State::Connecting(ref mut fut, ref stopwatch) => match fut.poll()? {
                     Async::NotReady => return Ok(Async::NotReady),
                     Async::Ready(stream) => {
+                        self.collector.send(stopwatch.elapsed(Metric::Connection));
                         stream.set_nodelay(self.nodelay)?;
                         let connected = Connected::new();
-                        self.collector.add(Event::Connected);
                         return Ok(Async::Ready((stream, connected)));
                     }
                 },

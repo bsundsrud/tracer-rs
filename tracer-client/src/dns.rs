@@ -1,12 +1,13 @@
-use crate::events::{Event, EventCollector};
+use crate::client::Metric;
 use futures::prelude::*;
 use futures_cpupool::{Builder as CpuPoolBuilder, CpuFuture, CpuPool};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
+use tracer_metrics::{CollectorHandle, Stopwatch};
 
 #[derive(Clone)]
 pub struct TracingResolver {
     executor: CpuPool,
-    collector: EventCollector,
+    collector: CollectorHandle<Metric>,
 }
 
 pub struct IpAddrs {
@@ -22,7 +23,7 @@ impl Iterator for IpAddrs {
 }
 
 impl TracingResolver {
-    pub fn new(threads: usize, collector: EventCollector) -> TracingResolver {
+    pub fn new(threads: usize, collector: CollectorHandle<Metric>) -> TracingResolver {
         TracingResolver {
             executor: CpuPoolBuilder::new()
                 .name_prefix("hyper-tracing-dns")
@@ -38,9 +39,9 @@ impl TracingResolver {
         }
         let collector = self.collector.clone();
         let fut = self.executor.spawn_fn(move || {
-            collector.add(Event::DnsResolutionStarted);
+            let stopwatch = Stopwatch::new();
             let ipaddrs = resolve(&name);
-            collector.add(Event::DnsResolutionFinished);
+            collector.send(stopwatch.elapsed(Metric::Dns));
             ipaddrs
         });
         ResolveFuture::Dns(fut)
