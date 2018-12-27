@@ -1,7 +1,7 @@
 use crate::util;
 use failure::Fail;
 use fnv::FnvHashMap;
-use histogram::Histogram;
+use hdrhistogram::Histogram;
 use std::hash::Hash;
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ pub enum HistogramError {
 }
 
 pub struct Histograms<T> {
-    data: FnvHashMap<T, Histogram>,
+    data: FnvHashMap<T, Histogram<u64>>,
 }
 
 impl<T> Histograms<T>
@@ -28,20 +28,23 @@ where
     }
 
     pub fn init(&mut self, key: T) {
-        self.data.insert(key, Histogram::new());
+        self.data.insert(
+            key,
+            Histogram::new_with_max(60 * 1000 * 1000, 3).expect("Could not create histogram"),
+        );
     }
 
     pub fn interested(&self, key: &T) -> bool {
         self.data.contains_key(&key)
     }
 
-    pub fn increment(&mut self, key: &T, bucket: u64) {
-        self.increment_by(key, bucket, 1);
+    pub fn increment(&mut self, key: &T, value: u64) {
+        self.increment_by(key, value, 1);
     }
 
-    pub fn increment_by(&mut self, key: &T, bucket: u64, val: u64) {
+    pub fn increment_by(&mut self, key: &T, value: u64, count: u64) {
         if let Some(h) = self.data.get_mut(&key) {
-            let _ = h.increment_by(bucket, val);
+            h.saturating_record_n(value, count);
         }
     }
 
@@ -51,17 +54,12 @@ where
         }
     }
 
-    pub fn get(&self, key: &T) -> Option<Histogram> {
+    pub fn get(&self, key: &T) -> Option<Histogram<u64>> {
         self.data.get(&key).map(|h| h.clone())
     }
 
-    pub fn percentile(&self, key: &T, perc: f64) -> Result<u64, HistogramError> {
-        if let Some(h) = self.data.get(&key) {
-            h.percentile(perc)
-                .map_err(move |_| HistogramError::NoDataForPercentile(perc))
-        } else {
-            Err(HistogramError::NoDataForKey)
-        }
+    pub fn quantile(&self, key: &T, q: f64) -> Option<u64> {
+        self.data.get(&key).map(|h| h.value_at_quantile(q))
     }
 
     pub fn remove(&mut self, key: &T) {
@@ -70,32 +68,32 @@ where
 }
 
 #[derive(Clone)]
-pub struct LatencyHistogram(Histogram);
+pub struct LatencyHistogram(Histogram<u64>);
 
-impl From<Histogram> for LatencyHistogram {
-    fn from(h: Histogram) -> LatencyHistogram {
+impl From<Histogram<u64>> for LatencyHistogram {
+    fn from(h: Histogram<u64>) -> LatencyHistogram {
         LatencyHistogram(h)
     }
 }
 
 impl LatencyHistogram {
     pub fn min(&self) -> Duration {
-        util::u64_to_dur(self.0.minimum().unwrap())
+        util::u64_to_dur(self.0.min())
     }
 
     pub fn max(&self) -> Duration {
-        util::u64_to_dur(self.0.maximum().unwrap())
+        util::u64_to_dur(self.0.max())
     }
 
-    pub fn percentile(&self, percentile: f64) -> Duration {
-        util::u64_to_dur(self.0.percentile(percentile).unwrap())
+    pub fn quantile(&self, q: f64) -> Duration {
+        util::u64_to_dur(self.0.value_at_quantile(q))
     }
 
     pub fn mean(&self) -> Duration {
-        util::u64_to_dur(self.0.mean().unwrap())
+        util::u64_to_dur(self.0.mean().trunc() as u64)
     }
 
     pub fn stddev(&self) -> Duration {
-        util::u64_to_dur(self.0.stddev().unwrap())
+        util::u64_to_dur(self.0.stdev().trunc() as u64)
     }
 }

@@ -1,6 +1,6 @@
 use crate::histogram::LatencyHistogram;
 use crate::util;
-use histogram::Histogram;
+use hdrhistogram::Histogram;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::time::Duration;
@@ -9,15 +9,15 @@ pub struct Meters<T> {
     key: T,
     count: Option<u64>,
     gauge: Option<u64>,
-    latency_histogram: Option<Histogram>,
+    latency_histogram: Option<Histogram<u64>>,
 }
 
 impl<T: Eq + Hash + Display + Send + Clone> Meters<T> {
-    pub fn new<U: Into<Option<u64>>, V: Into<Option<Histogram>>>(
+    pub fn new(
         key: T,
-        count: U,
-        gauge: U,
-        latency_histogram: V,
+        count: Option<u64>,
+        gauge: Option<u64>,
+        latency_histogram: Option<Histogram<u64>>,
     ) -> Meters<T> {
         Meters {
             key,

@@ -57,13 +57,13 @@ pub fn execute_test(
     };
     let logger = logger.new(slog::o!("test" => config.name.clone()));
     client.request(req).full_response().then(move |result| {
-        let (res, body, collector) = result?;
-        let events = collector.drain_events();
-        let t = Timing::from_events(events)?;
-        slog::debug!(logger, "Response: {:?}", res);
-        slog::debug!(logger, "Timings: {}", t);
-        let r = TestReport::new(config, t, res, hash_body(body));
-        Ok(r)
+        let (res, body) = result?;
+        //let events = collector.drain_events();
+        // let t = Timing::from_events(events)?;
+        // slog::debug!(logger, "Response: {:?}", res);
+        // slog::debug!(logger, "Timings: {}", t);
+        // let r = TestReport::new(config, t, res, hash_body(body));
+        // Ok(r)
     })
 }
 

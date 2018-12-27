@@ -7,5 +7,5 @@ edition = "2018"
 [dependencies]
 crossbeam = "*"
 fnv = "*"
-histogram = "*"
 failure = "*"
+hdrhistogram = { version = "*", default-features = false }

@@ -15,5 +15,4 @@ pub mod metrics {
     pub use crate::histogram::{HistogramError, Histograms};
     pub use crate::meters::Meters;
     pub use crate::sample::{Sample, SampleValue};
-    pub use histogram::Histogram;
 }

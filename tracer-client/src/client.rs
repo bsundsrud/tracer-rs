@@ -31,18 +31,11 @@ impl fmt::Display for Metric {
 
 pub struct Client<C, B> {
     client: HyperClient<C, B>,
-    collector: Collector<Metric>,
+    collector: CollectorHandle<Metric>,
 }
 
 impl Client<TracingHttpsConnector, Body> {
-    pub fn new() -> Client<TracingHttpsConnector, Body> {
-        Client::default()
-    }
-}
-
-impl Default for Client<TracingHttpsConnector, Body> {
-    fn default() -> Client<TracingHttpsConnector, Body> {
-        let mut collector = Collector::new();
+    pub fn configure_collector_defaults(collector: &mut Collector<Metric>) {
         collector.register(Interest::Count(Metric::Connection));
         collector.register(Interest::Count(Metric::Dns));
         collector.register(Interest::Count(Metric::Tls));
@@ -60,10 +53,29 @@ impl Default for Client<TracingHttpsConnector, Body> {
         collector.register(Interest::Gauge(Metric::Tls));
         collector.register(Interest::Gauge(Metric::Headers));
         collector.register(Interest::Gauge(Metric::FullResponse));
+    }
 
-        let connector = TracingHttpsConnector::new(true, 4, collector.handle());
+    pub fn new_with_collector_handle(
+        handle: CollectorHandle<Metric>,
+    ) -> Client<TracingHttpsConnector, Body> {
+        let connector = TracingHttpsConnector::new(true, 4, handle.clone());
         let client = HyperClient::builder().keep_alive(false).build(connector);
-        Client { client, collector }
+        Client {
+            client,
+            collector: handle,
+        }
+    }
+    pub fn new_with_collector(
+        collector: &mut Collector<Metric>,
+    ) -> Client<TracingHttpsConnector, Body> {
+        Client::configure_collector_defaults(collector);
+        Client::new_with_collector_handle(collector.handle())
+    }
+
+    pub fn new_client_and_collector() -> (Client<TracingHttpsConnector, Body>, Collector<Metric>) {
+        let mut collector = Collector::new();
+        let client = Client::new_with_collector(&mut collector);
+        (client, collector)
     }
 }
 
@@ -75,17 +87,8 @@ where
     B: Payload + Send + 'static,
     B::Data: Send,
 {
-    pub fn collector(&self) -> &Collector<Metric> {
-        &self.collector
-    }
-
-    pub fn collector_mut(&mut self) -> &mut Collector<Metric> {
-        &mut self.collector
-    }
-
     pub fn request(&self, req: Request<B>) -> ResponseFuture {
-        let collector = self.collector.handle();
-        let handle = collector.clone();
+        let handle = self.collector.clone();
         let send = self.client.request(req);
         let fut = future::lazy(move || {
             let stopwatch = Stopwatch::new();
@@ -94,7 +97,7 @@ where
                 (resp, stopwatch)
             })
         });
-        ResponseFuture::new(Box::new(fut), collector)
+        ResponseFuture::new(Box::new(fut), self.collector.clone())
     }
 }
 
@@ -180,13 +183,12 @@ mod test {
     use super::*;
     #[test]
     fn client_test() {
-        let mut c = Client::new();
+        let (c, mut collector) = Client::new_client_and_collector();
         let req = Request::builder()
             .uri("https://badssl.com/")
             .body(Body::empty())
             .unwrap();
         let fut = c.request(req).full_response();
-        let collector = c.collector_mut();
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         match rt.block_on(fut) {
             Ok((res, body)) => {
@@ -197,6 +199,17 @@ mod test {
                 println!("Length: {}", body.len());
 
                 collector.process_outstanding();
+                let metrics = [
+                    Metric::Dns,
+                    Metric::Connection,
+                    Metric::Tls,
+                    Metric::Headers,
+                    Metric::FullResponse,
+                ];
+                for k in &metrics {
+                    let metric = collector.meters(&k);
+                    println!("{}: {:?}", k, metric.gauge_as_duration().unwrap());
+                }
             }
             Err(e) => println!("ERROR: {}", e),
         }
