@@ -11,6 +11,7 @@ use hyper::Chunk;
 use hyper::Error as HyperError;
 use std::fmt;
 use tokio::prelude::stream::Concat2;
+use tracer_metrics::data::Snapshot;
 use tracer_metrics::{Collector, CollectorHandle, Interest, Stopwatch};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -20,6 +21,19 @@ pub enum Metric {
     Tls,
     Headers,
     FullResponse,
+}
+
+impl Metric {
+    pub fn all_metrics(collector: &Collector<Metric>) -> Vec<Snapshot<Metric>> {
+        static ALL_METRICS: &'static [Metric] = &[
+            Metric::Dns,
+            Metric::Connection,
+            Metric::Tls,
+            Metric::Headers,
+            Metric::FullResponse,
+        ];
+        ALL_METRICS.iter().map(|m| collector.snapshot(m)).collect()
+    }
 }
 
 impl fmt::Display for Metric {
@@ -199,16 +213,13 @@ mod test {
                 println!("Length: {}", body.len());
 
                 collector.process_outstanding();
-                let metrics = [
-                    Metric::Dns,
-                    Metric::Connection,
-                    Metric::Tls,
-                    Metric::Headers,
-                    Metric::FullResponse,
-                ];
-                for k in &metrics {
-                    let metric = collector.meters(&k);
-                    println!("{}: {:?}", k, metric.gauge_as_duration().unwrap());
+                let snapshots = Metric::all_metrics(&collector);
+                for snapshot in &snapshots {
+                    println!(
+                        "{}: {:?}",
+                        snapshot.key(),
+                        snapshot.gauge_as_duration().unwrap()
+                    );
                 }
             }
             Err(e) => println!("ERROR: {}", e),

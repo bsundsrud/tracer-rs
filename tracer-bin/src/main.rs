@@ -1,7 +1,6 @@
 mod config;
 mod http;
 mod reporting;
-mod timing;
 
 use crate::config::Config;
 use crate::http::TestExecutor;

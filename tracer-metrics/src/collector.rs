@@ -1,8 +1,8 @@
 use crate::counter::Counters;
 use crate::gauge::Gauges;
 use crate::histogram::Histograms;
-use crate::meters::Meters;
 use crate::sample::Sample;
+use crate::snapshots::{Percentile, Snapshot};
 use crate::stopwatch::Stopwatch;
 use crate::util;
 use crossbeam::channel::{unbounded, Receiver, Sender};
@@ -23,6 +23,18 @@ pub struct Collector<T> {
     latency_histograms: Histograms<T>,
     tx: Sender<Sample<T>>,
     rx: Receiver<Sample<T>>,
+    percentiles: Vec<Percentile>,
+}
+
+pub fn default_percentiles() -> Vec<Percentile> {
+    vec![
+        Percentile::new("p50", 50.0),
+        Percentile::new("p75", 75.0),
+        Percentile::new("p90", 90.0),
+        Percentile::new("p95", 95.0),
+        Percentile::new("p99", 99.0),
+        Percentile::new("p99.9", 99.9),
+    ]
 }
 
 impl<T> Collector<T>
@@ -37,6 +49,7 @@ where
             latency_histograms: Histograms::new(),
             tx,
             rx,
+            percentiles: default_percentiles(),
         }
     }
 
@@ -78,12 +91,13 @@ where
         }
     }
 
-    pub fn meters(&self, key: &T) -> Meters<T> {
-        Meters::new(
+    pub fn snapshot(&self, key: &T) -> Snapshot<T> {
+        Snapshot::new(
             key.clone(),
             self.counters.get(&key),
             self.gauges.get(&key),
             self.latency_histograms.get(&key),
+            self.percentiles.clone(),
         )
     }
 }

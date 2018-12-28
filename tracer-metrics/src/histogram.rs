@@ -1,17 +1,6 @@
-use crate::util;
-use failure::Fail;
 use fnv::FnvHashMap;
 use hdrhistogram::Histogram;
 use std::hash::Hash;
-use std::time::Duration;
-
-#[derive(Debug, Fail)]
-pub enum HistogramError {
-    #[fail(display = "No data")]
-    NoDataForKey,
-    #[fail(display = "No data for percentile {}", _0)]
-    NoDataForPercentile(f64),
-}
 
 pub struct Histograms<T> {
     data: FnvHashMap<T, Histogram<u64>>,
@@ -64,36 +53,5 @@ where
 
     pub fn remove(&mut self, key: &T) {
         self.data.remove(&key);
-    }
-}
-
-#[derive(Clone)]
-pub struct LatencyHistogram(Histogram<u64>);
-
-impl From<Histogram<u64>> for LatencyHistogram {
-    fn from(h: Histogram<u64>) -> LatencyHistogram {
-        LatencyHistogram(h)
-    }
-}
-
-impl LatencyHistogram {
-    pub fn min(&self) -> Duration {
-        util::u64_to_dur(self.0.min())
-    }
-
-    pub fn max(&self) -> Duration {
-        util::u64_to_dur(self.0.max())
-    }
-
-    pub fn quantile(&self, q: f64) -> Duration {
-        util::u64_to_dur(self.0.value_at_quantile(q))
-    }
-
-    pub fn mean(&self) -> Duration {
-        util::u64_to_dur(self.0.mean().trunc() as u64)
-    }
-
-    pub fn stddev(&self) -> Duration {
-        util::u64_to_dur(self.0.stdev().trunc() as u64)
     }
 }

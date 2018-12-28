@@ -1,26 +1,32 @@
 use crate::config::CaptureHeaderConfig;
 use crate::config::TestConfig;
-use crate::timing::Timing;
 use http::response::Parts;
 use http::HeaderMap;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::Duration;
+use tracer_client::client::Metric;
+use tracer_metrics::data::Snapshot;
 
 pub struct TestReport {
     config: TestConfig,
-    timings: Timing,
+    snapshots: Vec<Snapshot<Metric>>,
     res: Parts,
     body_hash: String,
     captured_headers: HashMap<String, String>,
 }
 
 impl TestReport {
-    pub fn new(config: TestConfig, timings: Timing, res: Parts, body_hash: String) -> TestReport {
+    pub fn new(
+        config: TestConfig,
+        snapshots: Vec<Snapshot<Metric>>,
+        res: Parts,
+        body_hash: String,
+    ) -> TestReport {
         let captured_headers = extract_configured_headers(&config.capture_headers, &res.headers);
         TestReport {
             config,
-            timings,
+            snapshots,
             res,
             body_hash,
             captured_headers,

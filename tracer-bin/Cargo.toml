@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 tracer-client = { path = "../tracer-client" }
+tracer-metrics = { path = "../tracer-metrics" }
 hyper = "*"
 failure = "*"
 clap = "*"
