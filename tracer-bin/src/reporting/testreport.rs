@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::Duration;
 use tracer_client::client::Metric;
+use tracer_metrics::data::HistoSnapshot;
 use tracer_metrics::data::Snapshot;
 
 pub struct TestReport {
@@ -31,6 +32,9 @@ impl TestReport {
             body_hash,
             captured_headers,
         }
+    }
+    pub fn take_config(self) -> TestConfig {
+        self.config
     }
 }
 
@@ -64,26 +68,52 @@ fn extract_configured_headers(
         .collect()
 }
 
+fn format_histo(h: &HistoSnapshot<Duration>, count: u64) -> String {
+    if count > 1 {
+        let pcs = h
+            .percentiles()
+            .iter()
+            .map(|(p, v)| {
+                let s: String = format!("{} {}", p.label(), fmt_duration(&v));
+                s
+            })
+            .fold(String::new(), |acc, v| acc + "|" + &v);
+        format!(
+            "-- {}/{}/{}/{}",
+            fmt_duration(&h.min()),
+            fmt_duration(&h.mean()),
+            fmt_duration(&h.max()),
+            fmt_duration(&h.stdev())
+        )
+    } else {
+        String::new()
+    }
+}
+
+fn format_snapshot(s: &Snapshot<Metric>, f: &mut Formatter) -> FmtResult {
+    let count = s.count().unwrap_or(0);
+    write!(
+        f,
+        "  [{} {}: {}] {}\n",
+        s.key(),
+        count,
+        fmt_duration(&s.gauge_as_duration().unwrap()),
+        format_histo(&s.latency_histogram().unwrap(), count)
+    )
+}
+
 impl Display for TestReport {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{} {}", self.config.name, self.res.status)?;
-        let t = &self.timings;
-        if let Some(d) = t.dns_resolution {
-            write!(f, " | DNS: {:>7}", fmt_duration(&d))?;
+    fn fmt(&self, mut f: &mut Formatter) -> FmtResult {
+        write!(
+            f,
+            "** {} ({}) Hash: {}\n",
+            self.config.name,
+            self.res.status,
+            &self.body_hash[0..8]
+        )?;
+        for s in &self.snapshots {
+            format_snapshot(&s, &mut f)?;
         }
-        if let Some(d) = t.connection {
-            write!(f, " | C: {:>7}", fmt_duration(&d))?;
-        }
-        if let Some(d) = t.tls_negotiation {
-            write!(f, " | TLS: {:>7}", fmt_duration(&d))?;
-        }
-        if let Some(d) = t.headers {
-            write!(f, " | Hd: {:>7}", fmt_duration(&d))?;
-        }
-        if let Some(d) = t.full_response {
-            write!(f, " | Resp: {:>7}", fmt_duration(&d))?;
-        }
-        write!(f, " | Hash: {}", &self.body_hash[0..8])?;
         for (k, v) in self.captured_headers.iter() {
             write!(f, "\n  {}: {}", k, v)?;
         }

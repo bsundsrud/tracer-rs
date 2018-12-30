@@ -1,18 +1,19 @@
 use crate::config::{Config, PayloadConfig, TestConfig};
 use crate::reporting::TestReport;
-use crate::timing::Timing;
 use failure::Error;
 use futures::future;
 use futures::prelude::*;
+use tracer_client::client::Metric;
 
 use http::Request;
-use hyper::{Body, Chunk};
+use hyper::{Body, Chunk, Error as HyperError};
 use sha2::{Digest, Sha256};
 use slog;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 use tracer_client::Client;
+use tracer_metrics::Collector;
 
 pub struct TestExecutor {
     config: Config,
@@ -24,25 +25,64 @@ impl TestExecutor {
         TestExecutor { config, logger }
     }
 
+    fn tests_and_collectors(self) -> impl Iterator<Item = (TestConfig, Collector<Metric>)> {
+        self.config.tests.into_iter().map(|t| {
+            let mut c = Collector::new();
+            Client::configure_collector_defaults(&mut c);
+            (t, c)
+        })
+    }
+
+    pub fn execute_repeated_tests<R: Into<Option<usize>>>(
+        self,
+        repetitions: R,
+    ) -> impl Future<Item = (), Error = ()> {
+        let logger = self.logger.clone();
+        let repetitions = repetitions.into();
+        let chain = self.tests_and_collectors().map(move |(t, c)| {
+            let err_logger = logger.clone();
+            future::loop_fn((t, c, 1), move |(t, c, it)| {
+                execute_test(c, t).and_then(move |(report, collector)| {
+                    println!("{}", report);
+                    if let Some(n) = repetitions {
+                        if it >= n {
+                            return Ok(future::Loop::Break((report.take_config(), collector, it)));
+                        }
+                    }
+                    Ok(future::Loop::Continue((
+                        report.take_config(),
+                        collector,
+                        it + 1,
+                    )))
+                })
+            })
+            .map(|_| ())
+            .map_err(move |e| slog::error!(err_logger, "{}", e))
+        });
+        future::join_all(chain).map(|_| ())
+    }
+
     pub fn execute_all_tests(self) -> impl Future<Item = (), Error = ()> {
         let logger = self.logger.clone();
-        future::join_all(self.config.tests.into_iter().map(move |c| {
+        let chain = self.tests_and_collectors().map(move |(t, c)| {
             let err_logger = logger.clone();
-            let logger = logger.clone();
-            execute_test(logger.clone(), c.clone())
-                .inspect(|res| println!("{}", res))
-                .map(|_| ())
-                .map_err(move |e| slog::error!(err_logger, "{}", e))
-        }))
-        .map(|_| ())
+            execute_test(c, t)
+                .map(|(report, _)| {
+                    println!("{}", report);
+                })
+                .map_err(move |e| {
+                    slog::error!(err_logger, "{}", e);
+                })
+        });
+        future::join_all(chain).map(|_| ())
     }
 }
 
 pub fn execute_test(
-    logger: slog::Logger,
+    mut collector: Collector<Metric>,
     config: TestConfig,
-) -> impl Future<Item = TestReport, Error = Error> {
-    let client = Client::new();
+) -> impl Future<Item = (TestReport, Collector<Metric>), Error = HyperError> {
+    let client = Client::new_with_collector_handle(collector.handle());
 
     let mut builder = Request::builder();
     builder.uri(config.url.clone()).method(&*config.method);
@@ -55,15 +95,15 @@ pub fn execute_test(
             PayloadConfig::Value { value: v } => builder.body(v.clone().into()).unwrap(),
         },
     };
-    let logger = logger.new(slog::o!("test" => config.name.clone()));
-    client.request(req).full_response().then(move |result| {
-        let (res, body) = result?;
-        //let events = collector.drain_events();
-        // let t = Timing::from_events(events)?;
-        // slog::debug!(logger, "Response: {:?}", res);
-        // slog::debug!(logger, "Timings: {}", t);
-        // let r = TestReport::new(config, t, res, hash_body(body));
-        // Ok(r)
+    client.request(req).full_response().map(move |(res, body)| {
+        collector.process_outstanding();
+        let tr = TestReport::new(
+            config,
+            Metric::all_metrics(&collector),
+            res,
+            hash_body(body),
+        );
+        (tr, collector)
     })
 }
 

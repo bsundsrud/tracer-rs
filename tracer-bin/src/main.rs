@@ -4,7 +4,7 @@ mod reporting;
 
 use crate::config::Config;
 use crate::http::TestExecutor;
-use clap::{App, Arg, SubCommand};
+use clap::{value_t, App, Arg, SubCommand};
 use failure::Error;
 use futures::future;
 use futures::Future;
@@ -19,17 +19,16 @@ fn root_logger(level: Level) -> slog::Logger {
     slog::Logger::root(level_filter, o!())
 }
 
-fn run_tests(logger: slog::Logger, config: Config) -> Result<(), Error> {
+fn run_tests(logger: slog::Logger, config: Config, repeat: Option<usize>) -> Result<(), Error> {
     let t = TestExecutor::new(config, logger);
     let mut rt = Runtime::new()?;
-
-    rt.spawn(future::lazy(move || t.execute_all_tests()));
+    rt.spawn(future::lazy(move || t.execute_repeated_tests(repeat)));
     rt.shutdown_on_idle().wait().unwrap();
     Ok(())
 }
 
 fn main() {
-    let matches = App::new("Cache Blaster")
+    let matches = App::new("Tracer")
         .version("1.0")
         .author("Benn Sundsrud <benn.sundsrud@gmail.com>")
         .about("Test web endpoints and measure response times")
@@ -41,6 +40,20 @@ fn main() {
                 .help("Path to config file")
                 .required(true)
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("C")
+                .short("C")
+                .help("Continuous mode")
+                .conflicts_with("n")
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("n")
+                .short("n")
+                .takes_value(true)
+                .conflicts_with("C")
+                .required(false),
         )
         .arg(
             Arg::with_name("v")
@@ -62,6 +75,16 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let repeat = if matches.is_present("C") {
+        None
+    } else {
+        if matches.is_present("n") {
+            let count = value_t!(matches, "n", usize).unwrap_or_else(|e| e.exit());
+            Some(count)
+        } else {
+            Some(1)
+        }
+    };
     let level = match matches.occurrences_of("v") {
         0 => Level::Warning,
         1 => Level::Info,
@@ -73,7 +96,7 @@ fn main() {
         }
     };
     let logger = root_logger(level);
-    match run_tests(logger.clone(), config) {
+    match run_tests(logger.clone(), config, repeat) {
         Err(e) => {
             eprintln!("Error running tests: {}", e);
             std::process::exit(1);
