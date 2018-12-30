@@ -70,16 +70,9 @@ fn extract_configured_headers(
 
 fn format_histo(h: &HistoSnapshot<Duration>, count: u64) -> String {
     if count > 1 {
-        let pcs = h
-            .percentiles()
-            .iter()
-            .map(|(p, v)| {
-                let s: String = format!("{} {}", p.label(), fmt_duration(&v));
-                s
-            })
-            .fold(String::new(), |acc, v| acc + "|" + &v);
         format!(
-            "-- {}/{}/{}/{}",
+            "-- ({}) {}/{}/{}/{}",
+            count,
             fmt_duration(&h.min()),
             fmt_duration(&h.mean()),
             fmt_duration(&h.max()),
@@ -94,9 +87,8 @@ fn format_snapshot(s: &Snapshot<Metric>, f: &mut Formatter) -> FmtResult {
     let count = s.count().unwrap_or(0);
     write!(
         f,
-        "  [{} {}: {}] {}\n",
+        "  {}: {} {}\n",
         s.key(),
-        count,
         fmt_duration(&s.gauge_as_duration().unwrap()),
         format_histo(&s.latency_histogram().unwrap(), count)
     )
@@ -106,7 +98,7 @@ impl Display for TestReport {
     fn fmt(&self, mut f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "** {} ({}) Hash: {}\n",
+            "* {} ({}) Hash: {}\n",
             self.config.name,
             self.res.status,
             &self.body_hash[0..8]
@@ -114,8 +106,11 @@ impl Display for TestReport {
         for s in &self.snapshots {
             format_snapshot(&s, &mut f)?;
         }
-        for (k, v) in self.captured_headers.iter() {
-            write!(f, "\n  {}: {}", k, v)?;
+        if self.captured_headers.len() > 0 {
+            write!(f, "\n  HEADERS:\n")?;
+            for (k, v) in self.captured_headers.iter() {
+                write!(f, "    {}: {}\n", k, v)?;
+            }
         }
 
         Ok(())

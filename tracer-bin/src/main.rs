@@ -2,7 +2,8 @@ mod config;
 mod http;
 mod reporting;
 
-use crate::config::Config;
+use hyper::Uri;
+use crate::config::{PayloadConfig, Config, CaptureHeaderConfig};
 use crate::http::TestExecutor;
 use clap::{value_t, App, Arg, SubCommand};
 use failure::Error;
@@ -33,17 +34,9 @@ fn main() {
         .author("Benn Sundsrud <benn.sundsrud@gmail.com>")
         .about("Test web endpoints and measure response times")
         .arg(
-            Arg::with_name("config")
-                .short("c")
-                .long("config")
-                .value_name("FILE")
-                .help("Path to config file")
-                .required(true)
-                .takes_value(true),
-        )
-        .arg(
             Arg::with_name("C")
                 .short("C")
+                .long("continuous")
                 .help("Continuous mode")
                 .conflicts_with("n")
                 .required(false),
@@ -51,6 +44,8 @@ fn main() {
         .arg(
             Arg::with_name("n")
                 .short("n")
+                .value_name("COUNT")
+                .help("Repeat request a set number of times")
                 .takes_value(true)
                 .conflicts_with("C")
                 .required(false),
@@ -61,20 +56,95 @@ fn main() {
                 .multiple(true)
                 .help("Sets verbosity level"),
         )
-        .subcommand(SubCommand::with_name("test").about("run tests"))
-        .subcommand(
-            SubCommand::with_name("checkpoint")
-                .about("create a reference checkpoint for the given config"),
+        .arg(
+            Arg::with_name("header")
+                .value_name("HEADER")
+                .short("H")
+                .long("header")
+                .help("Header to include in request, in HEADER=VALUE format.  Can be specified multiple times. Case insensitive")
+                .takes_value(true)
+                .multiple(true)
+                .required(false)
         )
+        .arg(
+            Arg::with_name("capture")
+                .value_name("HEADER")
+                .short("i")
+                .long("capture")
+                .help("Header to capture from request. Can be specified multiple times. Case insensitive.")
+                .conflicts_with("capture-all")
+                .takes_value(true)
+                .multiple(true)
+                .required(false)
+        )
+        .arg(
+            Arg::with_name("capture-all")
+                .long("capture-all")
+                .help("Capture all headers from response")
+                .conflicts_with("capture")
+                .required(false)
+        )
+        .arg(
+            Arg::with_name("body-file")
+                .value_name("BODY_FILE")
+                .short("f")
+                .long("body")
+                .help("File to use as request body")
+                .required(false)
+                .takes_value(true)
+        )
+        .arg(
+            Arg::with_name("method")
+                .value_name("METHOD")
+                .short("X")
+                .long("method")
+                .help("HTTP Method to use (Default GET)")
+                .required(false)
+                .takes_value(true)
+        )
+        .arg(
+            Arg::with_name("URL")
+                .takes_value(true)
+                .index(1)
+                .help("URL to test")
+        )
+        .subcommand(
+            SubCommand::with_name("test")
+                .arg(Arg::with_name("config")
+                     .value_name("CONFIG")
+                     .index(1)
+                     .takes_value(true)
+                     .required(true)
+                     .help("Config file that specifies the test(s) to run")
+                )
+        )
+                         
         .get_matches();
-    let config_path = matches.value_of("config").unwrap();
-    let config = match Config::load(&config_path) {
-        Ok(conf) => conf,
-        Err(e) => {
-            eprintln!("Could not load config: {}", e);
-            std::process::exit(1);
+    let config = if let Some(m) = matches.subcommand_matches("test") {
+        let config_path = m.value_of("config").unwrap();
+        match Config::load(&config_path) {
+            Ok(conf) => conf,
+            Err(e) => {
+                eprintln!("Could not load config: {}", e);
+                std::process::exit(1);
+            }
         }
+    } else {
+        let url = matches.value_of("URL").expect("No URL value").parse::<Uri>().expect("Invalid URL");
+        let method = matches.value_of("method").unwrap_or("GET").to_string();
+        let headers: Vec<String> = matches.values_of("header").map(|h| h.map(|s| s.to_string()).collect()).unwrap_or(Vec::new());
+        let payload = matches.value_of("body-file").map(|f| PayloadConfig::relative_to_current(f));
+        let capture_headers = if matches.is_present("capture-all") {
+            CaptureHeaderConfig::all()
+        } else if matches.is_present("capture") {
+            let captures: Vec<String> = matches.values_of("capture").map(|v| v.map(|s| s.to_string()).collect()).unwrap_or(Vec::new());
+            CaptureHeaderConfig::list(&captures)
+        } else {
+            CaptureHeaderConfig::empty()
+        };
+        Config::single(url, method, headers, payload, capture_headers)
     };
+   ;
     let repeat = if matches.is_present("C") {
         None
     } else {

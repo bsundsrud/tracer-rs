@@ -3,6 +3,7 @@ use hyper::Uri;
 use serde_derive::Deserialize;
 use std::collections::HashSet;
 use std::convert::From;
+use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
@@ -16,6 +17,14 @@ pub enum PayloadConfig {
 }
 
 impl PayloadConfig {
+    pub fn relative_to_current<S: AsRef<str>>(file: S) -> PayloadConfig {
+        let curdir = env::current_dir().expect("Couldn't get current working directory");
+        let abspath = Path::new(&curdir).join(file.as_ref());
+        PayloadConfig::File {
+            file: abspath.to_string_lossy().into(),
+        }
+    }
+
     fn make_absolute(mut self, parent: &Path) -> PayloadConfig {
         match self {
             PayloadConfig::File { ref mut file } => {
@@ -73,6 +82,23 @@ pub enum CaptureHeaderConfig {
     List(HashSet<String>),
 }
 
+impl CaptureHeaderConfig {
+    pub fn empty() -> CaptureHeaderConfig {
+        CaptureHeaderConfig::List(HashSet::new())
+    }
+
+    pub fn all() -> CaptureHeaderConfig {
+        CaptureHeaderConfig::All
+    }
+
+    pub fn list<'a, S: AsRef<str> + Into<String> + Clone, L: AsRef<[S]>>(
+        headers: L,
+    ) -> CaptureHeaderConfig {
+        let l: HashSet<String> = headers.as_ref().iter().map(|s| s.clone().into()).collect();
+        CaptureHeaderConfig::List(l)
+    }
+}
+
 impl Default for CaptureHeaderConfig {
     fn default() -> CaptureHeaderConfig {
         CaptureHeaderConfig::List(HashSet::new())
@@ -100,6 +126,25 @@ pub enum ConfigError {
 }
 
 impl Config {
+    pub fn single(
+        url: Uri,
+        method: String,
+        headers: Vec<String>,
+        payload: Option<PayloadConfig>,
+        capture_headers: CaptureHeaderConfig,
+    ) -> Config {
+        let t = TestConfig {
+            name: url.to_string(),
+            url,
+            method,
+            headers,
+            payload,
+            capture_headers,
+        };
+
+        Config { tests: vec![t] }
+    }
+
     fn fill_defaults(unresolved: FileConfig, path: &Path) -> Result<Config, Error> {
         let default_method = unresolved.default_method.unwrap_or_else(|| "GET".into());
         let default_headers = unresolved.default_headers.unwrap_or_else(|| Vec::new());

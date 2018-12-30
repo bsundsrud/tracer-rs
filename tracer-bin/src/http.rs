@@ -61,21 +61,6 @@ impl TestExecutor {
         });
         future::join_all(chain).map(|_| ())
     }
-
-    pub fn execute_all_tests(self) -> impl Future<Item = (), Error = ()> {
-        let logger = self.logger.clone();
-        let chain = self.tests_and_collectors().map(move |(t, c)| {
-            let err_logger = logger.clone();
-            execute_test(c, t)
-                .map(|(report, _)| {
-                    println!("{}", report);
-                })
-                .map_err(move |e| {
-                    slog::error!(err_logger, "{}", e);
-                })
-        });
-        future::join_all(chain).map(|_| ())
-    }
 }
 
 pub fn execute_test(
