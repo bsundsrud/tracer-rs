@@ -1,6 +1,7 @@
 use failure::{Error, Fail};
 use hyper::Uri;
 use serde_derive::Deserialize;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::From;
 use std::env;
@@ -36,7 +37,7 @@ impl PayloadConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CaptureHeaderFileConfig {
     all: Option<bool>,
     list: Option<Vec<String>>,
@@ -47,17 +48,23 @@ pub struct FileTestConfig {
     pub name: String,
     pub url: Option<String>,
     pub method: Option<String>,
-    pub headers: Option<Vec<String>>,
+    pub headers: Option<HashMap<String, String>>,
     pub payload: Option<PayloadConfig>,
     pub capture_headers: Option<CaptureHeaderFileConfig>,
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DefaultsConfig {
+    pub url: Option<String>,
+    pub method: Option<String>,
+    pub headers: Option<HashMap<String, String>>,
+    pub capture_headers: Option<CaptureHeaderFileConfig>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct FileConfig {
-    pub default_url: Option<String>,
-    pub default_method: Option<String>,
-    pub default_headers: Option<Vec<String>>,
-    pub default_capture_headers: Option<CaptureHeaderFileConfig>,
+    pub defaults: Option<DefaultsConfig>,
+    #[serde(rename = "test")]
     pub tests: Vec<FileTestConfig>,
 }
 
@@ -71,7 +78,7 @@ pub struct TestConfig {
     pub name: String,
     pub url: Uri,
     pub method: String,
-    pub headers: Vec<String>,
+    pub headers: HashMap<String, String>,
     pub payload: Option<PayloadConfig>,
     pub capture_headers: CaptureHeaderConfig,
 }
@@ -129,7 +136,7 @@ impl Config {
     pub fn single(
         url: Uri,
         method: String,
-        headers: Vec<String>,
+        headers: HashMap<String, String>,
         payload: Option<PayloadConfig>,
         capture_headers: CaptureHeaderConfig,
     ) -> Config {
@@ -146,15 +153,30 @@ impl Config {
     }
 
     fn fill_defaults(unresolved: FileConfig, path: &Path) -> Result<Config, Error> {
-        let default_method = unresolved.default_method.unwrap_or_else(|| "GET".into());
-        let default_headers = unresolved.default_headers.unwrap_or_else(|| Vec::new());
+        let default_method = unresolved
+            .defaults
+            .as_ref()
+            .and_then(|d| d.method.clone())
+            .unwrap_or_else(|| "GET".into());
+        let default_headers = unresolved
+            .defaults
+            .as_ref()
+            .and_then(|d| d.headers.clone())
+            .unwrap_or_else(|| HashMap::new());
 
         let default_capture_headers = unresolved
-            .default_capture_headers
+            .defaults
+            .as_ref()
+            .and_then(|d| d.capture_headers.clone())
             .map(CaptureHeaderConfig::from)
             .unwrap_or_else(|| CaptureHeaderConfig::default());
 
-        let default_url = match unresolved.default_url.as_ref() {
+        let default_url = match unresolved
+            .defaults
+            .as_ref()
+            .and_then(|d| d.url.clone())
+            .as_ref()
+        {
             Some(ref url_res) => Some(url_res.parse::<Uri>()?),
             None => {
                 for test in unresolved.tests.iter() {

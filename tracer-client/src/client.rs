@@ -32,7 +32,17 @@ impl Metric {
             Metric::Headers,
             Metric::FullResponse,
         ];
-        ALL_METRICS.iter().map(|m| collector.snapshot(m)).collect()
+        ALL_METRICS
+            .iter()
+            .filter_map(|m| {
+                let snapshot = collector.snapshot(m);
+                if snapshot.count().unwrap_or(0) > 0 {
+                    Some(collector.snapshot(m))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 

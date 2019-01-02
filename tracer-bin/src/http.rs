@@ -1,4 +1,5 @@
 use crate::config::{Config, PayloadConfig, TestConfig};
+use crate::interrupt::Interrupted;
 use crate::reporting::TestReport;
 use failure::Error;
 use futures::future;
@@ -36,14 +37,20 @@ impl TestExecutor {
     pub fn execute_repeated_tests<R: Into<Option<usize>>>(
         self,
         repetitions: R,
-    ) -> impl Future<Item = (), Error = ()> {
+        interrupted: Interrupted,
+    ) -> impl Future<Item = Vec<(TestConfig, Collector<Metric>)>, Error = ()> {
         let logger = self.logger.clone();
         let repetitions = repetitions.into();
         let chain = self.tests_and_collectors().map(move |(t, c)| {
+            let interrupted = interrupted.clone();
             let err_logger = logger.clone();
             future::loop_fn((t, c, 1), move |(t, c, it)| {
+                let interrupted = interrupted.clone();
                 execute_test(c, t).and_then(move |(report, collector)| {
                     println!("{}", report);
+                    if interrupted.interrupted() {
+                        return Ok(future::Loop::Break((report.take_config(), collector, it)));
+                    }
                     if let Some(n) = repetitions {
                         if it >= n {
                             return Ok(future::Loop::Break((report.take_config(), collector, it)));
@@ -56,10 +63,10 @@ impl TestExecutor {
                     )))
                 })
             })
-            .map(|_| ())
+            .map(|(t, c, _)| (t, c))
             .map_err(move |e| slog::error!(err_logger, "{}", e))
         });
-        future::join_all(chain).map(|_| ())
+        future::join_all(chain)
     }
 }
 
@@ -71,6 +78,9 @@ pub fn execute_test(
 
     let mut builder = Request::builder();
     builder.uri(config.url.clone()).method(&*config.method);
+    config.headers.iter().for_each(|(k, v)| {
+        builder.header(k.as_str(), v.as_str());
+    });
     let req: Request<Body> = match config.payload {
         None => builder.body(Body::empty()).unwrap(),
         Some(ref p) => match p {

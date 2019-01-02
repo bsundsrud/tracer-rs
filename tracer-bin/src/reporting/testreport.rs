@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::time::Duration;
 use tracer_client::client::Metric;
-use tracer_metrics::data::HistoSnapshot;
 use tracer_metrics::data::Snapshot;
 
 pub struct TestReport {
@@ -68,11 +67,11 @@ fn extract_configured_headers(
         .collect()
 }
 
-fn format_histo(h: &HistoSnapshot<Duration>, count: u64) -> String {
-    if count > 1 {
+pub fn format_snapshot_stats(s: &Snapshot<Metric>) -> String {
+    if let Some(h) = s.latency_histogram() {
         format!(
-            "-- ({}) {}/{}/{}/{}",
-            count,
+            "count {}/min {}/avg {}/max {}/stdev {}",
+            s.count().unwrap_or(0),
             fmt_duration(&h.min()),
             fmt_duration(&h.mean()),
             fmt_duration(&h.max()),
@@ -83,14 +82,23 @@ fn format_histo(h: &HistoSnapshot<Duration>, count: u64) -> String {
     }
 }
 
+fn abbrev_metric(m: &Metric) -> &'static str {
+    use tracer_client::client::Metric::*;
+    match m {
+        Dns => "DNS",
+        Connection => "Conn",
+        Tls => "TLS",
+        Headers => "Hdrs",
+        FullResponse => "Resp",
+    }
+}
+
 fn format_snapshot(s: &Snapshot<Metric>, f: &mut Formatter) -> FmtResult {
-    let count = s.count().unwrap_or(0);
     write!(
         f,
-        "  {}: {} {}\n",
-        s.key(),
-        fmt_duration(&s.gauge_as_duration().unwrap()),
-        format_histo(&s.latency_histogram().unwrap(), count)
+        "{}: {} ",
+        abbrev_metric(&s.key()),
+        fmt_duration(&s.gauge_as_duration().unwrap())
     )
 }
 
@@ -98,7 +106,7 @@ impl Display for TestReport {
     fn fmt(&self, mut f: &mut Formatter) -> FmtResult {
         write!(
             f,
-            "* {} ({}) Hash: {}\n",
+            "* {} ({}) Hash: {} ",
             self.config.name,
             self.res.status,
             &self.body_hash[0..8]
@@ -107,9 +115,8 @@ impl Display for TestReport {
             format_snapshot(&s, &mut f)?;
         }
         if self.captured_headers.len() > 0 {
-            write!(f, "\n  HEADERS:\n")?;
             for (k, v) in self.captured_headers.iter() {
-                write!(f, "    {}: {}\n", k, v)?;
+                write!(f, "\n    {}: {}", k, v)?;
             }
         }
 
