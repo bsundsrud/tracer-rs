@@ -93,9 +93,34 @@ Content-Type = "application/json"
 all = true
 ```
 
+## Examples
+
+```
+$ tracer -n5 -s https://www.google.com
+* https://www.google.com/ (200 OK) Hash: e08cff4f DNS: 39ms Conn: 25ms TLS: 66ms Hdrs: 207ms Resp: 253ms 
+* https://www.google.com/ (200 OK) Hash: 1b11b899 DNS: 0ms Conn: 24ms TLS: 64ms Hdrs: 160ms Resp: 203ms 
+* https://www.google.com/ (200 OK) Hash: 6a48961a DNS: 1ms Conn: 27ms TLS: 63ms Hdrs: 164ms Resp: 209ms 
+* https://www.google.com/ (200 OK) Hash: 4763a261 DNS: 0ms Conn: 25ms TLS: 63ms Hdrs: 171ms Resp: 214ms 
+* https://www.google.com/ (200 OK) Hash: 724ba633 DNS: 0ms Conn: 25ms TLS: 60ms Hdrs: 164ms Resp: 208ms 
+https://www.google.com/ stats:
+  Dns: count 5/min 0ms/avg 8ms/max 39ms/stdev 15ms
+  Connection: count 5/min 24ms/avg 25ms/max 27ms/stdev 0ms
+  Tls: count 5/min 60ms/avg 63ms/max 66ms/stdev 1ms
+  Headers: count 5/min 160ms/avg 173ms/max 207ms/stdev 17ms
+  FullResponse: count 5/min 203ms/avg 218ms/max 253ms/stdev 17ms
+```
+
+### Explanation
+* Hash - SHA256 hash of response body, abbreviated to first 8 hex digits
+* DNS - time taken to resolve DNS name (Omitted if connecting to an IP)
+* Conn/Connection - time taken to establish TCP connection
+* TLS - time taken to do TLS negotiation (Omitted if connecting over plain HTTP)
+* Hdrs/Headers - time taken to receive the HTTP headers, starting from initiation of the request
+* Resp/FullResponse - time taken to receive the full response body, starting from initiation of the request
+
 ## Building
 
-### GNU libc
+### Standard
 #### Debug Builds
 `cargo build`. Binary will be `target/debug/tracer`.
 
