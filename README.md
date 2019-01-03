@@ -119,6 +119,7 @@ https://www.google.com/ stats:
 * Resp/FullResponse - time taken to receive the full response body, starting from initiation of the request
 
 ## Building
+Tracer uses the 2018 edition of Rust and therefore depends on a rust version >= 1.31.0.
 
 ### Standard
 #### Debug Builds
