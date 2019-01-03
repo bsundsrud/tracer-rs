@@ -1,55 +1,64 @@
 mod config;
 mod http;
-mod reporting;
 mod interrupt;
+mod reporting;
 
-use std::collections::HashMap;
-use hyper::Uri;
-use crate::config::{PayloadConfig, Config, CaptureHeaderConfig};
+use crate::config::{CaptureHeaderConfig, Config, PayloadConfig};
 use crate::http::TestExecutor;
 use clap::{value_t, App, Arg, SubCommand};
 use failure::Error;
 use futures::future;
 use futures::Future;
+use hyper::Uri;
 use slog::{o, Drain, Level};
+use std::collections::HashMap;
 use tokio::runtime::Runtime;
 use tracer_client::client::Metric;
 
 fn root_logger(level: Level) -> slog::Logger {
-    let decorator = slog_term::TermDecorator::new().stdout().build();
+    let decorator = slog_term::TermDecorator::new().stderr().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let async_drain = slog_async::Async::new(drain).build().fuse();
     let level_filter = slog::LevelFilter(async_drain, level).fuse();
     slog::Logger::root(level_filter, o!())
 }
 
-fn run_tests(logger: slog::Logger, config: Config, repeat: Option<usize>, stats_summary: bool, interrupted: interrupt::Interrupted) -> Result<(), Error> {
+fn run_tests(
+    logger: slog::Logger,
+    config: Config,
+    repeat: Option<usize>,
+    stats_summary: bool,
+    interrupted: interrupt::Interrupted,
+) -> Result<(), Error> {
     let t = TestExecutor::new(config, logger);
     let mut rt = Runtime::new()?;
-    rt.spawn(future::lazy(move || t.execute_repeated_tests(repeat, interrupted).map(move |v| {
-        if stats_summary {
-            for (config, collector) in v {
-                println!("{} stats:", config.name);
-                let snapshots = Metric::all_metrics(&collector);
-                snapshots
-                    .iter()
-                    .filter(|s| s.count().unwrap_or(0) > 0)
-                    .for_each(|s| {
-                        println!("  {}: {}", s.key(), reporting::format_snapshot_stats(&s));
-                    });      
+    rt.spawn(future::lazy(move || {
+        t.execute_repeated_tests(repeat, interrupted).map(move |v| {
+            if stats_summary {
+                for (config, collector) in v {
+                    println!("{} stats:", config.name);
+                    let snapshots = Metric::all_metrics(&collector);
+                    snapshots
+                        .iter()
+                        .filter(|s| s.count().unwrap_or(0) > 0)
+                        .for_each(|s| {
+                            println!("  {}: {}", s.key(), reporting::format_snapshot_stats(&s));
+                        });
+                }
             }
-        }
-        ()
-    })));
+            ()
+        })
+    }));
     rt.shutdown_on_idle().wait().unwrap();
     Ok(())
 }
 
 fn main() {
-    let matches = App::new("Tracer")
-        .version("1.0")
+    let cli = App::new("Tracer")
+        .version("0.1.0")
         .author("Benn Sundsrud <benn.sundsrud@gmail.com>")
         .about("Test web endpoints and measure response times")
+        .setting(clap::AppSettings::SubcommandsNegateReqs)
         .arg(
             Arg::with_name("C")
                 .short("C")
@@ -140,9 +149,11 @@ fn main() {
                 .takes_value(true)
                 .index(1)
                 .help("URL to test")
+                .required(true)
         )
         .subcommand(
             SubCommand::with_name("test")
+                .about("Run pre-defined tests in toml format")
                 .arg(Arg::with_name("config")
                      .value_name("CONFIG")
                      .index(1)
@@ -150,9 +161,8 @@ fn main() {
                      .required(true)
                      .help("Config file that specifies the test(s) to run")
                 )
-        )
-                         
-        .get_matches();
+        );
+    let matches = cli.get_matches();
     let config = if let Some(m) = matches.subcommand_matches("test") {
         let config_path = m.value_of("config").unwrap();
         match Config::load(&config_path) {
@@ -163,20 +173,36 @@ fn main() {
             }
         }
     } else {
-        let url = matches.value_of("URL").expect("No URL value").parse::<Uri>().expect("Invalid URL");
+        let url = matches
+            .value_of("URL")
+            .expect("No URL value")
+            .parse::<Uri>()
+            .expect("Invalid URL");
         let method = matches.value_of("method").unwrap_or("GET").to_string();
-        let headers: HashMap<String, String> = matches.values_of("header").map(|h| {
-            h.map(|s| {
-                let mut it = s.splitn(2, "=");
-                // unwraps are panic-safe here because of the validator on 'header' values
-                (it.next().unwrap().to_string(), it.next().unwrap().to_string())
-            }).collect()
-        }).unwrap_or(HashMap::new());
-        let payload = matches.value_of("body-file").map(|f| PayloadConfig::relative_to_current(f));
+        let headers: HashMap<String, String> = matches
+            .values_of("header")
+            .map(|h| {
+                h.map(|s| {
+                    let mut it = s.splitn(2, "=");
+                    // unwraps are panic-safe here because of the validator on 'header' values
+                    (
+                        it.next().unwrap().to_string(),
+                        it.next().unwrap().to_string(),
+                    )
+                })
+                .collect()
+            })
+            .unwrap_or(HashMap::new());
+        let payload = matches
+            .value_of("body-file")
+            .map(|f| PayloadConfig::relative_to_current(f));
         let capture_headers = if matches.is_present("capture-all") {
             CaptureHeaderConfig::all()
         } else if matches.is_present("capture") {
-            let captures: Vec<String> = matches.values_of("capture").map(|v| v.map(|s| s.to_string()).collect()).unwrap_or(Vec::new());
+            let captures: Vec<String> = matches
+                .values_of("capture")
+                .map(|v| v.map(|s| s.to_string()).collect())
+                .unwrap_or(Vec::new());
             CaptureHeaderConfig::list(&captures)
         } else {
             CaptureHeaderConfig::empty()
@@ -205,7 +231,7 @@ fn main() {
         }
     };
     let stats = matches.is_present("stats");
-    
+
     let logger = root_logger(level);
     let interrupted = interrupt::register().expect("Could not register interrupt handler");
     match run_tests(logger.clone(), config, repeat, stats, interrupted) {

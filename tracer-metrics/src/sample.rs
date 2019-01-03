@@ -1,7 +1,6 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use std::marker::PhantomData;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SampleValue {
     Elapsed(Duration),
