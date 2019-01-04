@@ -37,10 +37,10 @@ fn run_tests(
             if stats_summary {
                 for (config, collector) in v {
                     println!("{} stats:", config.name);
-                    let snapshots = Metric::all_metrics(&collector);
+                    let snapshots = Metric::get_all_metrics(&collector);
                     snapshots
                         .iter()
-                        .filter(|s| s.count().unwrap_or(0) > 0)
+                        .filter(|s| s.latency_histogram().is_some())
                         .for_each(|s| {
                             println!("  {}: {}", s.key(), reporting::format_snapshot_stats(&s));
                         });

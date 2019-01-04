@@ -97,17 +97,17 @@ all = true
 
 ```
 $ tracer -n5 -s https://www.google.com
-* https://www.google.com/ (200 OK) Hash: e08cff4f DNS: 39ms Conn: 25ms TLS: 66ms Hdrs: 207ms Resp: 253ms 
-* https://www.google.com/ (200 OK) Hash: 1b11b899 DNS: 0ms Conn: 24ms TLS: 64ms Hdrs: 160ms Resp: 203ms 
-* https://www.google.com/ (200 OK) Hash: 6a48961a DNS: 1ms Conn: 27ms TLS: 63ms Hdrs: 164ms Resp: 209ms 
-* https://www.google.com/ (200 OK) Hash: 4763a261 DNS: 0ms Conn: 25ms TLS: 63ms Hdrs: 171ms Resp: 214ms 
-* https://www.google.com/ (200 OK) Hash: 724ba633 DNS: 0ms Conn: 25ms TLS: 60ms Hdrs: 164ms Resp: 208ms 
+* https://www.google.com/ (200 OK) Hash: 147e5a5d DNS: 2ms Conn: 27ms TLS: 86ms Hdrs: 208ms HdrLen: 809B Resp: 257ms BodyLen: 44.7KB
+* https://www.google.com/ (200 OK) Hash: 69de36ae DNS: 0ms Conn: 26ms TLS: 84ms Hdrs: 199ms HdrLen: 809B Resp: 256ms BodyLen: 44.7KB
+* https://www.google.com/ (200 OK) Hash: 37a6ec53 DNS: 0ms Conn: 26ms TLS: 83ms Hdrs: 201ms HdrLen: 809B Resp: 248ms BodyLen: 44.7KB
+* https://www.google.com/ (200 OK) Hash: 60d3753a DNS: 0ms Conn: 26ms TLS: 79ms Hdrs: 196ms HdrLen: 809B Resp: 242ms BodyLen: 44.7KB
+* https://www.google.com/ (200 OK) Hash: 582179ea DNS: 0ms Conn: 26ms TLS: 101ms Hdrs: 222ms HdrLen: 809B Resp: 265ms BodyLen: 44.7KB
 https://www.google.com/ stats:
-  Dns: count 5/min 0ms/avg 8ms/max 39ms/stdev 15ms
-  Connection: count 5/min 24ms/avg 25ms/max 27ms/stdev 0ms
-  Tls: count 5/min 60ms/avg 63ms/max 66ms/stdev 1ms
-  Headers: count 5/min 160ms/avg 173ms/max 207ms/stdev 17ms
-  FullResponse: count 5/min 203ms/avg 218ms/max 253ms/stdev 17ms
+  Dns: count 5/min 0ms/avg 0ms/max 2ms/stdev 1ms
+  Connection: count 5/min 26ms/avg 26ms/max 27ms/stdev 0ms
+  Tls: count 5/min 79ms/avg 86ms/max 101ms/stdev 7ms
+  Headers: count 5/min 195ms/avg 205ms/max 222ms/stdev 9ms
+  FullResponse: count 5/min 242ms/avg 254ms/max 265ms/stdev 7ms
 ```
 
 ### Explanation
@@ -116,7 +116,9 @@ https://www.google.com/ stats:
 * Conn/Connection - time taken to establish TCP connection
 * TLS - time taken to do TLS negotiation (Omitted if connecting over plain HTTP)
 * Hdrs/Headers - time taken to receive the HTTP headers, starting from initiation of the request
+* HdrLen - length of headers
 * Resp/FullResponse - time taken to receive the full response body, starting from initiation of the request
+* BodyLen - length of response body
 
 ## Building
 Tracer uses the 2018 edition of Rust and therefore depends on a rust version >= 1.31.0.

@@ -21,19 +21,39 @@ pub enum Metric {
     Tls,
     Headers,
     FullResponse,
+    HeaderLen,
+    BodyLen,
 }
 
 impl Metric {
-    pub fn all_metrics(collector: &Collector<Metric>) -> Vec<Snapshot<Metric>> {
-        static ALL_METRICS: &'static [Metric] = &[
+    pub fn all_metrics() -> &'static [Metric] {
+        &[
+            Metric::Dns,
+            Metric::Connection,
+            Metric::Tls,
+            Metric::Headers,
+            Metric::HeaderLen,
+            Metric::FullResponse,
+            Metric::BodyLen,
+        ]
+    }
+
+    pub fn latency_metrics() -> &'static [Metric] {
+        &[
             Metric::Dns,
             Metric::Connection,
             Metric::Tls,
             Metric::Headers,
             Metric::FullResponse,
-        ];
-        ALL_METRICS
-            .iter()
+        ]
+    }
+
+    pub fn size_metrics() -> &'static [Metric] {
+        &[Metric::HeaderLen, Metric::BodyLen]
+    }
+
+    pub fn get_metrics(m: &[Metric], collector: &Collector<Metric>) -> Vec<Snapshot<Metric>> {
+        m.iter()
             .filter_map(|m| {
                 let snapshot = collector.snapshot(m);
                 if snapshot.count().unwrap_or(0) > 0 {
@@ -43,6 +63,17 @@ impl Metric {
                 }
             })
             .collect()
+    }
+    pub fn get_all_metrics(collector: &Collector<Metric>) -> Vec<Snapshot<Metric>> {
+        Metric::get_metrics(Metric::all_metrics(), collector)
+    }
+
+    pub fn get_latency_metrics(collector: &Collector<Metric>) -> Vec<Snapshot<Metric>> {
+        Metric::get_metrics(Metric::latency_metrics(), collector)
+    }
+
+    pub fn get_size_metrics(collector: &Collector<Metric>) -> Vec<Snapshot<Metric>> {
+        Metric::get_metrics(Metric::size_metrics(), collector)
     }
 }
 
@@ -65,6 +96,8 @@ impl Client<TracingHttpsConnector, Body> {
         collector.register(Interest::Count(Metric::Tls));
         collector.register(Interest::Count(Metric::Headers));
         collector.register(Interest::Count(Metric::FullResponse));
+        collector.register(Interest::Count(Metric::BodyLen));
+        collector.register(Interest::Count(Metric::HeaderLen));
 
         collector.register(Interest::LatencyPercentile(Metric::Connection));
         collector.register(Interest::LatencyPercentile(Metric::Dns));
@@ -77,6 +110,8 @@ impl Client<TracingHttpsConnector, Body> {
         collector.register(Interest::Gauge(Metric::Tls));
         collector.register(Interest::Gauge(Metric::Headers));
         collector.register(Interest::Gauge(Metric::FullResponse));
+        collector.register(Interest::Gauge(Metric::BodyLen));
+        collector.register(Interest::Gauge(Metric::HeaderLen));
     }
 
     pub fn new_with_collector_handle(
@@ -221,9 +256,10 @@ mod test {
                     println!("{:?}: {:?}", k, v);
                 });
                 println!("Length: {}", body.len());
-
+                let handle = collector.handle();
+                handle.send_value(Metric::BodyLen, body.len() as u64);
                 collector.process_outstanding();
-                let snapshots = Metric::all_metrics(&collector);
+                let snapshots = Metric::get_all_metrics(&collector);
                 for snapshot in &snapshots {
                     println!(
                         "{}: {:?}",

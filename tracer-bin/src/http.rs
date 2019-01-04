@@ -4,6 +4,8 @@ use crate::reporting::TestReport;
 use failure::Error;
 use futures::future;
 use futures::prelude::*;
+use http::header::HeaderValue;
+use http::HeaderMap;
 use tracer_client::client::Metric;
 
 use http::Request;
@@ -70,6 +72,13 @@ impl TestExecutor {
     }
 }
 
+fn calculate_header_size(h: &HeaderMap<HeaderValue>) -> usize {
+    // Assume header is in the canonical form of <HEADER-NAME><COLON><SPACE><HEADER-VALUE>\r\n
+    h.keys()
+        .map::<usize, _>(|k| h.len() + h.get_all(k).iter().map(|v| v.len()).sum::<usize>() + 4)
+        .sum::<usize>() as usize
+}
+
 pub fn execute_test(
     mut collector: Collector<Metric>,
     config: TestConfig,
@@ -91,10 +100,15 @@ pub fn execute_test(
         },
     };
     client.request(req).full_response().map(move |(res, body)| {
+        let body_size = body.len();
+        let header_size = calculate_header_size(&res.headers);
+        let handle = collector.handle();
+        handle.send_value(Metric::BodyLen, body_size as u64);
+        handle.send_value(Metric::HeaderLen, header_size as u64);
         collector.process_outstanding();
         let tr = TestReport::new(
             config,
-            Metric::all_metrics(&collector),
+            Metric::get_all_metrics(&collector),
             res,
             hash_body(body),
         );

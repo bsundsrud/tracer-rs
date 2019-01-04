@@ -1,11 +1,12 @@
 use fnv::FnvHashMap;
+use std::fmt::Display;
 use std::hash::Hash;
 pub struct Gauges<T> {
     data: FnvHashMap<T, u64>,
 }
 impl<T> Gauges<T>
 where
-    T: Hash + Eq,
+    T: Hash + Eq + Display,
 {
     pub fn new() -> Gauges<T> {
         Gauges {

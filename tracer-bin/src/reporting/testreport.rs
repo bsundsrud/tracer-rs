@@ -46,6 +46,22 @@ fn fmt_duration(d: &Duration) -> String {
     }
 }
 
+fn fmt_size(s: u64) -> String {
+    let magnitudes = &["B", "KB", "MB", "GB"];
+    let max_magnitude = magnitudes.len() - 1;
+    let mut total = s as f64;
+    let mut cur_magnitude = 0;
+    while total > 1024.0 && cur_magnitude < max_magnitude {
+        total = total / 1024.0;
+        cur_magnitude += 1;
+    }
+    if cur_magnitude == 0 {
+        format!("{:.0}{}", total, magnitudes[cur_magnitude])
+    } else {
+        format!("{:.1}{}", total, magnitudes[cur_magnitude])
+    }
+}
+
 fn extract_configured_headers(
     conf: &CaptureHeaderConfig,
     headers: &HeaderMap,
@@ -90,16 +106,20 @@ fn abbrev_metric(m: &Metric) -> &'static str {
         Tls => "TLS",
         Headers => "Hdrs",
         FullResponse => "Resp",
+        BodyLen => "BodyLen",
+        HeaderLen => "HdrLen",
     }
 }
 
 fn format_snapshot(s: &Snapshot<Metric>, f: &mut Formatter) -> FmtResult {
-    write!(
-        f,
-        "{}: {} ",
-        abbrev_metric(&s.key()),
+    let display = if Metric::latency_metrics().contains(&s.key()) {
         fmt_duration(&s.gauge_as_duration().unwrap())
-    )
+    } else if Metric::size_metrics().contains(&s.key()) {
+        fmt_size(s.gauge().unwrap())
+    } else {
+        "".into()
+    };
+    write!(f, "{}: {} ", abbrev_metric(&s.key()), display)
 }
 
 impl Display for TestReport {
