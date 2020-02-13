@@ -121,7 +121,7 @@ https://www.google.com/ stats:
 * BodyLen - length of response body
 
 ## Building
-Tracer uses the 2018 edition of Rust and therefore depends on a rust version >= 1.31.0.
+Tracer uses the 2018 edition of Rust and async/await, so therefore depends on a rust version >= 1.39.0.
 
 ### Standard
 #### Debug Builds
@@ -140,4 +140,4 @@ The rest of this section assumes `<arch>=x86_64`. For a full list of possible ta
 `cargo build --release --target x86_64-unknown-linux-musl`. Binary will be `target/x86_64-unknown-linux-musl/release/tracer`
 
 ### This binary is huge!
-Yep. You can cut it roughly in half by running `strip(1)`: `strip /path/to/tracer`. 
+Yep. You can cut it roughly in half by running `strip(1)`: `strip /path/to/tracer`.
