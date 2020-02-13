@@ -1,20 +1,19 @@
 use crate::config::{Config, PayloadConfig, TestConfig};
 use crate::interrupt::Interrupted;
 use crate::reporting::TestReport;
-use failure::Error;
+use anyhow::Error;
 use futures::future;
-use futures::prelude::*;
+use futures::TryFutureExt;
 use http::header::HeaderValue;
 use http::HeaderMap;
-use tracer_client::client::Metric;
-
 use http::Request;
-use hyper::{Body, Chunk, Error as HyperError};
+use hyper::{body::Bytes, Body, Error as HyperError};
 use sha2::{Digest, Sha256};
 use slog;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use tracer_client::client::Metric;
 use tracer_client::Client;
 use tracer_metrics::Collector;
 
@@ -36,39 +35,36 @@ impl TestExecutor {
         })
     }
 
-    pub fn execute_repeated_tests<R: Into<Option<usize>>>(
+    pub async fn execute_repeated_tests<R: Into<Option<usize>>>(
         self,
         repetitions: R,
         interrupted: Interrupted,
-    ) -> impl Future<Item = Vec<(TestConfig, Collector<Metric>)>, Error = ()> {
+    ) -> Vec<Result<(TestConfig, Collector<Metric>), ()>> {
         let logger = self.logger.clone();
         let repetitions = repetitions.into();
-        let chain = self.tests_and_collectors().map(move |(t, c)| {
-            let interrupted = interrupted.clone();
-            let err_logger = logger.clone();
-            future::loop_fn((t, c, 1), move |(t, c, it)| {
+        let chain = self
+            .tests_and_collectors()
+            .map(|(t, c)| async {
                 let interrupted = interrupted.clone();
-                execute_test(c, t).and_then(move |(report, collector)| {
+                let mut iterations = 0;
+                let mut test = t;
+                let mut collector = c;
+                while !interrupted.interrupted() {
+                    let (report, c) = execute_test(test, collector).await?;
                     println!("{}", report);
-                    if interrupted.interrupted() {
-                        return Ok(future::Loop::Break((report.take_config(), collector, it)));
-                    }
+                    test = report.take_config();
+                    collector = c;
+                    iterations += 1;
                     if let Some(n) = repetitions {
-                        if it >= n {
-                            return Ok(future::Loop::Break((report.take_config(), collector, it)));
+                        if iterations >= n {
+                            break;
                         }
                     }
-                    Ok(future::Loop::Continue((
-                        report.take_config(),
-                        collector,
-                        it + 1,
-                    )))
-                })
+                }
+                Ok::<_, HyperError>((test, collector))
             })
-            .map(|(t, c, _)| (t, c))
-            .map_err(move |e| slog::error!(err_logger, "{}", e))
-        });
-        future::join_all(chain)
+            .map(|f| f.map_err(|e| slog::error!(logger, "{}", e)));
+        future::join_all(chain).await
     }
 }
 
@@ -79,17 +75,18 @@ fn calculate_header_size(h: &HeaderMap<HeaderValue>) -> usize {
         .sum::<usize>() as usize
 }
 
-pub fn execute_test(
-    mut collector: Collector<Metric>,
+pub async fn execute_test(
     config: TestConfig,
-) -> impl Future<Item = (TestReport, Collector<Metric>), Error = HyperError> {
+    mut collector: Collector<Metric>,
+) -> Result<(TestReport, Collector<Metric>), HyperError> {
     let client = Client::new_with_collector_handle(collector.handle());
 
-    let mut builder = Request::builder();
-    builder.uri(config.url.clone()).method(&*config.method);
-    config.headers.iter().for_each(|(k, v)| {
-        builder.header(k.as_str(), v.as_str());
-    });
+    let mut builder = Request::builder()
+        .uri(config.url.clone())
+        .method(&*config.method);
+    for (k, v) in config.headers.iter() {
+        builder = builder.header(k.as_str(), v.as_str());
+    }
     let req: Request<Body> = match config.payload {
         None => builder.body(Body::empty()).unwrap(),
         Some(ref p) => match p {
@@ -99,24 +96,23 @@ pub fn execute_test(
             PayloadConfig::Value { value: v } => builder.body(v.clone().into()).unwrap(),
         },
     };
-    client.request(req).full_response().map(move |(res, body)| {
-        let body_size = body.len();
-        let header_size = calculate_header_size(&res.headers);
-        let handle = collector.handle();
-        handle.send_value(Metric::BodyLen, body_size as u64);
-        handle.send_value(Metric::HeaderLen, header_size as u64);
-        collector.process_outstanding();
-        let tr = TestReport::new(
-            config,
-            Metric::get_all_metrics(&collector),
-            res,
-            hash_body(body),
-        );
-        (tr, collector)
-    })
+    let (res, body) = client.request_fully(req).await?;
+    let body_size = body.len();
+    let header_size = calculate_header_size(&res.headers);
+    let handle = collector.handle();
+    handle.send_value(Metric::BodyLen, body_size as u64);
+    handle.send_value(Metric::HeaderLen, header_size as u64);
+    collector.process_outstanding();
+    let tr = TestReport::new(
+        config,
+        Metric::get_all_metrics(&collector),
+        res,
+        hash_body(body),
+    );
+    Ok((tr, collector))
 }
 
-fn hash_body(c: Chunk) -> String {
+fn hash_body(c: Bytes) -> String {
     let mut h = Sha256::default();
     h.input(c);
     format!("{:x}", h.result())

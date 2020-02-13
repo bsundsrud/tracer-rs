@@ -5,14 +5,12 @@ mod reporting;
 
 use crate::config::{CaptureHeaderConfig, Config, PayloadConfig};
 use crate::http::TestExecutor;
+use ::http::Uri;
+use anyhow::Error;
 use clap::{value_t, App, Arg, SubCommand};
-use failure::Error;
-use futures::future;
-use futures::Future;
-use hyper::Uri;
 use slog::{o, Drain, Level};
 use std::collections::HashMap;
-use tokio::runtime::Runtime;
+use tokio::runtime;
 use tracer_client::client::Metric;
 
 fn root_logger(level: Level) -> slog::Logger {
@@ -31,25 +29,30 @@ fn run_tests(
     interrupted: interrupt::Interrupted,
 ) -> Result<(), Error> {
     let t = TestExecutor::new(config, logger);
-    let mut rt = Runtime::new()?;
-    rt.spawn(future::lazy(move || {
-        t.execute_repeated_tests(repeat, interrupted).map(move |v| {
-            if stats_summary {
-                for (config, collector) in v {
-                    println!("{} stats:", config.name);
-                    let snapshots = Metric::get_all_metrics(&collector);
-                    snapshots
-                        .iter()
-                        .filter(|s| s.latency_histogram().is_some())
-                        .for_each(|s| {
-                            println!("  {}: {}", s.key(), reporting::format_snapshot_stats(&s));
-                        });
-                }
+    let mut rt = runtime::Builder::new()
+        .threaded_scheduler()
+        .enable_all()
+        .build()?;
+    rt.block_on(async move {
+        let results = t.execute_repeated_tests(repeat, interrupted).await;
+        if stats_summary {
+            let results = results
+                .into_iter()
+                .filter(|r| r.is_ok())
+                .map(|r| r.unwrap());
+            for (config, collector) in results {
+                println!("{} stats:", config.name);
+                let snapshots = Metric::get_all_metrics(&collector);
+                snapshots
+                    .iter()
+                    .filter(|s| s.latency_histogram().is_some())
+                    .for_each(|s| {
+                        println!("  {}: {}", s.key(), reporting::format_snapshot_stats(&s));
+                    });
             }
-            ()
-        })
-    }));
-    rt.shutdown_on_idle().wait().unwrap();
+        }
+    });
+
     Ok(())
 }
 
@@ -96,7 +99,7 @@ fn main() {
                 .long("header")
                 .help("Header to include in request, in HEADER=VALUE format.  Can be specified multiple times. Case insensitive")
                 .validator(|v| {
-                    if (&v).splitn(2, "=").count() == 2 {
+                    if (&v).splitn(2, '=').count() == 2 {
                         Ok(())
                     } else {
                         Err(format!("No '=' found in header definition {}", v))
@@ -183,7 +186,7 @@ fn main() {
             .values_of("header")
             .map(|h| {
                 h.map(|s| {
-                    let mut it = s.splitn(2, "=");
+                    let mut it = s.splitn(2, '=');
                     // unwraps are panic-safe here because of the validator on 'header' values
                     (
                         it.next().unwrap().to_string(),
@@ -192,33 +195,31 @@ fn main() {
                 })
                 .collect()
             })
-            .unwrap_or(HashMap::new());
+            .unwrap_or_default();
         let payload = matches
             .value_of("body-file")
-            .map(|f| PayloadConfig::relative_to_current(f));
+            .map(PayloadConfig::relative_to_current);
         let capture_headers = if matches.is_present("capture-all") {
             CaptureHeaderConfig::all()
         } else if matches.is_present("capture") {
             let captures: Vec<String> = matches
                 .values_of("capture")
                 .map(|v| v.map(|s| s.to_string()).collect())
-                .unwrap_or(Vec::new());
+                .unwrap_or_default();
             CaptureHeaderConfig::list(&captures)
         } else {
             CaptureHeaderConfig::empty()
         };
         Config::single(url, method, headers, payload, capture_headers)
     };
-   ;
+
     let repeat = if matches.is_present("C") {
         None
+    } else if matches.is_present("n") {
+        let count = value_t!(matches, "n", usize).unwrap_or_else(|e| e.exit());
+        Some(count)
     } else {
-        if matches.is_present("n") {
-            let count = value_t!(matches, "n", usize).unwrap_or_else(|e| e.exit());
-            Some(count)
-        } else {
-            Some(1)
-        }
+        Some(1)
     };
     let level = match matches.occurrences_of("v") {
         0 => Level::Warning,
@@ -234,11 +235,8 @@ fn main() {
 
     let logger = root_logger(level);
     let interrupted = interrupt::register().expect("Could not register interrupt handler");
-    match run_tests(logger.clone(), config, repeat, stats, interrupted) {
-        Err(e) => {
-            eprintln!("Error running tests: {}", e);
-            std::process::exit(1);
-        }
-        _ => {}
+    if let Err(e) = run_tests(logger.clone(), config, repeat, stats, interrupted) {
+        eprintln!("Error running tests: {}", e);
+        std::process::exit(1);
     }
 }

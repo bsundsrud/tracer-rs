@@ -104,8 +104,8 @@ impl<T: Eq + Hash + Display + Send + Clone> Snapshot<T> {
     ) -> Snapshot<T> {
         Snapshot {
             key,
-            count: count,
-            gauge: gauge,
+            count,
+            gauge,
             latency_snapshot: latency_histogram.map(|h| HistoSnapshot::from_histo(&h, percentiles)),
         }
     }
@@ -127,6 +127,6 @@ impl<T: Eq + Hash + Display + Send + Clone> Snapshot<T> {
     }
 
     pub fn latency_histogram(&self) -> Option<HistoSnapshot<Duration>> {
-        self.latency_snapshot.clone().map(|h| h.into())
+        self.latency_snapshot.clone()
     }
 }

@@ -3,8 +3,15 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::time::Instant;
 
+#[derive(Debug)]
 pub struct Stopwatch {
     start: Instant,
+}
+
+impl Default for Stopwatch {
+    fn default() -> Self {
+        Stopwatch::new()
+    }
 }
 
 impl Stopwatch {

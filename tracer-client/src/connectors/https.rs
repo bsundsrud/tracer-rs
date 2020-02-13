@@ -1,18 +1,22 @@
 use super::http::TracingConnector;
 use crate::client::Metric;
+use crate::FutureResponse;
 use futures::prelude::*;
-use hyper::client::connect::Connect;
-use hyper::client::connect::Connected;
-use hyper::client::connect::Destination;
+use hyper::service::Service;
+use hyper::Uri;
 use hyper_rustls::HttpsConnector;
 use hyper_rustls::MaybeHttpsStream;
 use rustls::ClientConfig;
 use std::convert::From;
+use std::error::Error;
 use std::io;
 use std::sync::Arc;
+use std::task::Context;
+use std::task::Poll;
+use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tracer_metrics::{CollectorHandle, Stopwatch};
-use webpki::{DNSName, DNSNameRef};
+use webpki::DNSNameRef;
 
 #[derive(Clone)]
 pub struct TracingHttpsConnector {
@@ -22,12 +26,8 @@ pub struct TracingHttpsConnector {
 }
 
 impl TracingHttpsConnector {
-    pub fn new(
-        nodelay: bool,
-        threads: usize,
-        collector: CollectorHandle<Metric>,
-    ) -> TracingHttpsConnector {
-        let mut http = TracingConnector::new(threads, collector.clone());
+    pub fn new(nodelay: bool, collector: CollectorHandle<Metric>) -> TracingHttpsConnector {
+        let mut http = TracingConnector::new(collector.clone());
         http.set_nodelay(nodelay);
         let mut config = ClientConfig::new();
         config
@@ -53,52 +53,48 @@ impl From<(TracingConnector, ClientConfig, CollectorHandle<Metric>)> for Tracing
     }
 }
 
-impl Connect for TracingHttpsConnector {
-    type Transport = <HttpsConnector<TracingConnector> as Connect>::Transport;
-    type Error = <HttpsConnector<TracingConnector> as Connect>::Error;
-    type Future = TracingHttpsConnecting<<TracingConnector as Connect>::Transport>;
+impl Service<Uri> for TracingHttpsConnector {
+    type Response = <HttpsConnector<TracingConnector> as Service<Uri>>::Response;
+    type Error = <HttpsConnector<TracingConnector> as Service<Uri>>::Error;
+    type Future =
+        FutureResponse<MaybeHttpsStream<TcpStream>, Box<dyn Error + Send + Sync + 'static>>;
 
-    fn connect(&self, dst: Destination) -> Self::Future {
-        let is_https = dst.scheme() == "https";
-        let hostname = dst.host().to_string();
-        let connecting = self.http.connect(dst);
+    fn call(&mut self, dst: Uri) -> Self::Future {
         let collector = self.collector.clone();
-        if !is_https {
-            let fut = connecting.map(|(tcp, conn)| (MaybeHttpsStream::Http(tcp), conn));
-            TracingHttpsConnecting(Box::new(fut))
-        } else {
-            let cfg = self.tls_config.clone();
+        let connecting = self.http.call(dst.clone());
+        let cfg = self.tls_config.clone();
+        async move {
+            let is_https = dst.scheme().filter(|s| *s == "https").is_some();
+            let tcp = connecting.await?;
+            if !is_https {
+                return Ok(MaybeHttpsStream::Http(tcp));
+            }
+
             let connector = TlsConnector::from(cfg);
-            let fut = connecting
-                .map(|(tcp, conn)| (tcp, conn, hostname))
-                .and_then(
-                    |(tcp, conn, hostname)| match DNSNameRef::try_from_ascii_str(&hostname) {
-                        Ok(dnsname) => Ok((tcp, conn, DNSName::from(dnsname))),
-                        Err(_) => Err(io::Error::new(io::ErrorKind::Other, "invalid dnsname")),
-                    },
-                )
-                .and_then(move |(tcp, conn, dnsname)| {
-                    let stopwatch = Stopwatch::new();
-                    connector
-                        .connect(dnsname.as_ref(), tcp)
-                        .inspect(move |_| collector.send(stopwatch.elapsed(Metric::Tls)))
-                        .and_then(|tls| Ok((MaybeHttpsStream::Https(tls), conn)))
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-                });
-            TracingHttpsConnecting(Box::new(fut))
+            let hostname = if let Some(h) = dst.host() {
+                h.to_string()
+            } else {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "Missing Host").into());
+            };
+
+            let dnsname = match DNSNameRef::try_from_ascii_str(&hostname) {
+                Ok(dnsname) => dnsname,
+                Err(e) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("invalid dnsname: {}", e),
+                    )
+                    .into())
+                }
+            };
+            let stopwatch = Stopwatch::new();
+            let tls = connector.connect(dnsname, tcp).await?;
+            collector.send(stopwatch.elapsed(Metric::Tls));
+            Ok(MaybeHttpsStream::Https(tls))
         }
+        .boxed()
     }
-}
-
-pub struct TracingHttpsConnecting<T>(
-    Box<Future<Item = (MaybeHttpsStream<T>, Connected), Error = io::Error> + Send>,
-);
-
-impl<T> Future for TracingHttpsConnecting<T> {
-    type Item = (MaybeHttpsStream<T>, Connected);
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.0.poll()
+    fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 }

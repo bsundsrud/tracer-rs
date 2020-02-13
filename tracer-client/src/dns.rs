@@ -1,13 +1,43 @@
 use crate::client::Metric;
+use crate::FutureResponse;
 use futures::prelude::*;
-use futures_cpupool::{Builder as CpuPoolBuilder, CpuFuture, CpuPool};
+use hyper::client::connect::dns::Name;
+use hyper::service::Service;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
+use std::task::Context;
+use std::task::Poll;
 use tracer_metrics::{CollectorHandle, Stopwatch};
 
 #[derive(Clone)]
 pub struct TracingResolver {
-    executor: CpuPool,
     collector: CollectorHandle<Metric>,
+}
+
+impl Service<Name> for TracingResolver {
+    type Response = IpAddrs;
+    type Error = std::io::Error;
+    type Future = FutureResponse<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, name: Name) -> Self::Future {
+        let collector = self.collector.clone();
+        async move {
+            if let Some(addrs) = try_parse_ipaddr(&name) {
+                return Ok(addrs);
+            }
+            tokio::task::spawn_blocking(move || {
+                let stopwatch = Stopwatch::new();
+                let ipaddrs = resolve(&name);
+                collector.send(stopwatch.elapsed(Metric::Dns));
+                ipaddrs
+            })
+            .await?
+        }
+        .boxed()
+    }
 }
 
 pub struct IpAddrs {
@@ -23,57 +53,18 @@ impl Iterator for IpAddrs {
 }
 
 impl TracingResolver {
-    pub fn new(threads: usize, collector: CollectorHandle<Metric>) -> TracingResolver {
-        TracingResolver {
-            executor: CpuPoolBuilder::new()
-                .name_prefix("hyper-tracing-dns")
-                .pool_size(threads)
-                .create(),
-            collector,
-        }
-    }
-
-    pub fn resolve(&self, name: String) -> ResolveFuture {
-        if let Some(addrs) = try_parse_ipaddr(&name) {
-            return ResolveFuture::Ip(Some(addrs));
-        }
-        let collector = self.collector.clone();
-        let fut = self.executor.spawn_fn(move || {
-            let stopwatch = Stopwatch::new();
-            let ipaddrs = resolve(&name);
-            collector.send(stopwatch.elapsed(Metric::Dns));
-            ipaddrs
-        });
-        ResolveFuture::Dns(fut)
+    pub fn new(collector: CollectorHandle<Metric>) -> TracingResolver {
+        TracingResolver { collector }
     }
 }
 
-pub enum ResolveFuture {
-    Ip(Option<IpAddrs>),
-    Dns(CpuFuture<IpAddrs, std::io::Error>),
-}
-
-impl Future for ResolveFuture {
-    type Item = IpAddrs;
-    type Error = std::io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match *self {
-            ResolveFuture::Ip(ref mut ip) => {
-                Ok(Async::Ready(ip.take().expect("polled more than once")))
-            }
-            ResolveFuture::Dns(ref mut fut) => fut.poll(),
-        }
-    }
-}
-
-fn try_parse_ipaddr(host: &str) -> Option<IpAddrs> {
-    if let Ok(addr) = host.parse::<Ipv4Addr>() {
+fn try_parse_ipaddr(host: &Name) -> Option<IpAddrs> {
+    if let Ok(addr) = host.as_str().parse::<Ipv4Addr>() {
         let addr = SocketAddrV4::new(addr, 0);
         Some(IpAddrs {
             inner: vec![SocketAddr::V4(addr)].into_iter(),
         })
-    } else if let Ok(addr) = host.parse::<Ipv6Addr>() {
+    } else if let Ok(addr) = host.as_str().parse::<Ipv6Addr>() {
         let addr = SocketAddrV6::new(addr, 0, 0, 0);
         Some(IpAddrs {
             inner: vec![SocketAddr::V6(addr)].into_iter(),
@@ -83,8 +74,8 @@ fn try_parse_ipaddr(host: &str) -> Option<IpAddrs> {
     }
 }
 
-fn resolve(name: &str) -> Result<IpAddrs, std::io::Error> {
-    (name, 0)
+fn resolve(name: &Name) -> Result<IpAddrs, std::io::Error> {
+    (name.as_str(), 0)
         .to_socket_addrs()
         .map(|sockets| IpAddrs { inner: sockets })
 }

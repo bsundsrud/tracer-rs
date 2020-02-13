@@ -52,7 +52,7 @@ fn fmt_size(s: u64) -> String {
     let mut total = s as f64;
     let mut cur_magnitude = 0;
     while total > 1024.0 && cur_magnitude < max_magnitude {
-        total = total / 1024.0;
+        total /= 1024.0;
         cur_magnitude += 1;
     }
     if cur_magnitude == 0 {
@@ -98,7 +98,7 @@ pub fn format_snapshot_stats(s: &Snapshot<Metric>) -> String {
     }
 }
 
-fn abbrev_metric(m: &Metric) -> &'static str {
+fn abbrev_metric(m: Metric) -> &'static str {
     use tracer_client::client::Metric::*;
     match m {
         Dns => "DNS",
@@ -119,7 +119,7 @@ fn format_snapshot(s: &Snapshot<Metric>, f: &mut Formatter) -> FmtResult {
     } else {
         "".into()
     };
-    write!(f, "{}: {} ", abbrev_metric(&s.key()), display)
+    write!(f, "{}: {} ", abbrev_metric(s.key()), display)
 }
 
 impl Display for TestReport {
@@ -134,7 +134,7 @@ impl Display for TestReport {
         for s in &self.snapshots {
             format_snapshot(&s, &mut f)?;
         }
-        if self.captured_headers.len() > 0 {
+        if !self.captured_headers.is_empty() {
             for (k, v) in self.captured_headers.iter() {
                 write!(f, "\n    {}: {}", k, v)?;
             }

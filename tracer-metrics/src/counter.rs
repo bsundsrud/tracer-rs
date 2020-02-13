@@ -3,6 +3,16 @@ use std::hash::Hash;
 pub struct Counters<T> {
     data: FnvHashMap<T, u64>,
 }
+
+impl<T> Default for Counters<T>
+where
+    T: Hash + Eq,
+{
+    fn default() -> Self {
+        Counters::new()
+    }
+}
+
 impl<T> Counters<T>
 where
     T: Hash + Eq,
@@ -38,7 +48,7 @@ where
     }
 
     pub fn get(&self, key: &T) -> Option<u64> {
-        self.data.get(&key).map(|&v| v)
+        self.data.get(&key).copied()
     }
 
     pub fn remove(&mut self, key: &T) {

@@ -6,6 +6,15 @@ pub struct Histograms<T> {
     data: FnvHashMap<T, Histogram<u64>>,
 }
 
+impl<T> Default for Histograms<T>
+where
+    T: Hash + Eq,
+{
+    fn default() -> Self {
+        Histograms::new()
+    }
+}
+
 impl<T> Histograms<T>
 where
     T: Hash + Eq,
@@ -44,7 +53,7 @@ where
     }
 
     pub fn get(&self, key: &T) -> Option<Histogram<u64>> {
-        self.data.get(&key).map(|h| h.clone())
+        self.data.get(&key).cloned()
     }
 
     pub fn quantile(&self, key: &T, q: f64) -> Option<u64> {

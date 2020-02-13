@@ -1,6 +1,6 @@
-use failure::{Error, Fail};
-use hyper::Uri;
-use serde_derive::Deserialize;
+use anyhow::Error as AnyError;
+use http::Uri;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::From;
@@ -8,6 +8,7 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use thiserror::Error;
 use toml;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -98,7 +99,7 @@ impl CaptureHeaderConfig {
         CaptureHeaderConfig::All
     }
 
-    pub fn list<'a, S: AsRef<str> + Into<String> + Clone, L: AsRef<[S]>>(
+    pub fn list<S: AsRef<str> + Into<String> + Clone, L: AsRef<[S]>>(
         headers: L,
     ) -> CaptureHeaderConfig {
         let l: HashSet<String> = headers.as_ref().iter().map(|s| s.clone().into()).collect();
@@ -120,15 +121,15 @@ impl From<CaptureHeaderFileConfig> for CaptureHeaderConfig {
             CaptureHeaderConfig::List(
                 fc.list
                     .map(|v| v.into_iter().map(|val| val.to_lowercase()).collect())
-                    .unwrap_or_else(|| HashSet::new()),
+                    .unwrap_or_else(HashSet::new),
             )
         }
     }
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum ConfigError {
-    #[fail(display = "Missing url for test '{}' and no default_url set.", _0)]
+    #[error("Missing url for test '{0}' and no default_url set.")]
     MissingUrl(String),
 }
 
@@ -152,7 +153,7 @@ impl Config {
         Config { tests: vec![t] }
     }
 
-    fn fill_defaults(unresolved: FileConfig, path: &Path) -> Result<Config, Error> {
+    fn fill_defaults(unresolved: FileConfig, path: &Path) -> Result<Config, AnyError> {
         let default_method = unresolved
             .defaults
             .as_ref()
@@ -162,14 +163,14 @@ impl Config {
             .defaults
             .as_ref()
             .and_then(|d| d.headers.clone())
-            .unwrap_or_else(|| HashMap::new());
+            .unwrap_or_else(HashMap::new);
 
         let default_capture_headers = unresolved
             .defaults
             .as_ref()
             .and_then(|d| d.capture_headers.clone())
             .map(CaptureHeaderConfig::from)
-            .unwrap_or_else(|| CaptureHeaderConfig::default());
+            .unwrap_or_else(CaptureHeaderConfig::default);
 
         let default_url = match unresolved
             .defaults
@@ -188,7 +189,7 @@ impl Config {
             }
         };
 
-        let tests: Result<Vec<TestConfig>, Error> = unresolved
+        let tests: Result<Vec<TestConfig>, AnyError> = unresolved
             .tests
             .into_iter()
             .map(move |t| {
@@ -214,7 +215,7 @@ impl Config {
         Ok(Config { tests: tests? })
     }
 
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Config, Error> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Config, AnyError> {
         let mut f = File::open(path.as_ref())?;
         let mut contents = String::new();
         f.read_to_string(&mut contents)?;

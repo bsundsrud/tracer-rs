@@ -37,6 +37,15 @@ pub fn default_percentiles() -> Vec<Percentile> {
     ]
 }
 
+impl<T> Default for Collector<T>
+where
+    T: Hash + Eq + Send + Display + Clone,
+{
+    fn default() -> Self {
+        Collector::new()
+    }
+}
+
 impl<T> Collector<T>
 where
     T: Hash + Eq + Send + Display + Clone,

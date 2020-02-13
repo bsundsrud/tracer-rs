@@ -1,9 +1,20 @@
 use fnv::FnvHashMap;
 use std::fmt::Display;
 use std::hash::Hash;
+
 pub struct Gauges<T> {
     data: FnvHashMap<T, u64>,
 }
+
+impl<T> Default for Gauges<T>
+where
+    T: Hash + Eq + Display,
+{
+    fn default() -> Self {
+        Gauges::new()
+    }
+}
+
 impl<T> Gauges<T>
 where
     T: Hash + Eq + Display,
@@ -35,7 +46,7 @@ where
     }
 
     pub fn get(&self, key: &T) -> Option<u64> {
-        self.data.get(&key).map(|&v| v)
+        self.data.get(&key).copied()
     }
 
     pub fn remove(&mut self, key: &T) {
