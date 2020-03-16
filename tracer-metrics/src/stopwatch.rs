@@ -15,12 +15,14 @@ impl Default for Stopwatch {
 }
 
 impl Stopwatch {
+    /// Create a new Stopwatch, and start it.
     pub fn new() -> Stopwatch {
         Stopwatch {
             start: Instant::now(),
         }
     }
 
+    /// Create a Sample for the given key from the elapsed duration
     pub fn elapsed<T: Eq + Hash + Send + Display + Clone>(&self, key: T) -> Sample<T> {
         Sample::elapsed(key, self.start.elapsed())
     }

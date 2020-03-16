@@ -77,7 +77,7 @@ fn calculate_header_size(h: &HeaderMap<HeaderValue>) -> usize {
 
 pub async fn execute_test(
     config: TestConfig,
-    mut collector: Collector<Metric>,
+    collector: Collector<Metric>,
 ) -> Result<(TestReport, Collector<Metric>), HyperError> {
     let client = Client::new_with_collector_handle(collector.handle());
 

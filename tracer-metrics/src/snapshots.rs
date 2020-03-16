@@ -39,28 +39,34 @@ pub struct HistoSnapshot<T> {
 }
 
 impl<T: Clone> HistoSnapshot<T> {
+    /// Get the minimum value in this Snapshot
     pub fn min(&self) -> T {
         self.min.clone()
     }
 
+    /// Get the maximum value in this Snapshot
     pub fn max(&self) -> T {
         self.max.clone()
     }
 
+    /// Get the mean value in this Snapshot
     pub fn mean(&self) -> T {
         self.mean.clone()
     }
 
+    /// Get the standard deviation in this Snapshot
     pub fn stdev(&self) -> T {
         self.stdev.clone()
     }
 
+    /// Get the percentiles captured by this Snapshot
     pub fn percentiles(&self) -> Vec<(Percentile, T)> {
         self.percentiles.clone()
     }
 }
 
 impl HistoSnapshot<Duration> {
+    /// Create a Snapshot from a given Histogram and the desired Percentiles
     pub fn from_histo(
         histo: &Histogram<u64>,
         percentiles: Vec<Percentile>,
@@ -95,6 +101,7 @@ pub struct Snapshot<T> {
 }
 
 impl<T: Eq + Hash + Display + Send + Clone> Snapshot<T> {
+    /// Create a new Snapshot from the given count, gauage, histogram, and percentiles
     pub fn new(
         key: T,
         count: Option<u64>,
@@ -110,22 +117,27 @@ impl<T: Eq + Hash + Display + Send + Clone> Snapshot<T> {
         }
     }
 
+    /// Get the key for this Snapshot
     pub fn key(&self) -> T {
         self.key.clone()
     }
 
+    /// Get the count value for this Snapshot, if it exists
     pub fn count(&self) -> Option<u64> {
         self.count
     }
 
+    /// Get the gauge value for this Snapshot, if it exists
     pub fn gauge(&self) -> Option<u64> {
         self.gauge
     }
 
+    /// Get the gauge value for this Snapshot as a `Duration`, if it exists
     pub fn gauge_as_duration(&self) -> Option<Duration> {
         self.gauge.map(util::u64_to_dur)
     }
 
+    /// Get the latency histogram for this Snapshot, if it exists
     pub fn latency_histogram(&self) -> Option<HistoSnapshot<Duration>> {
         self.latency_snapshot.clone()
     }
