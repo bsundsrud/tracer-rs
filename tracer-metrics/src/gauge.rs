@@ -1,5 +1,4 @@
 use fnv::FnvHashMap;
-use std::fmt::Display;
 use std::hash::Hash;
 
 pub struct Gauges<T> {
@@ -8,7 +7,7 @@ pub struct Gauges<T> {
 
 impl<T> Default for Gauges<T>
 where
-    T: Hash + Eq + Display,
+    T: Hash + Eq,
 {
     fn default() -> Self {
         Gauges::new()
@@ -17,7 +16,7 @@ where
 
 impl<T> Gauges<T>
 where
-    T: Hash + Eq + Display,
+    T: Hash + Eq,
 {
     /// Create a new `Gauges` object with no interests.
     pub fn new() -> Gauges<T> {

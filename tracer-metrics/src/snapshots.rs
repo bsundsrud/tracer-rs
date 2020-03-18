@@ -100,7 +100,7 @@ pub struct Snapshot<T> {
     latency_snapshot: Option<HistoSnapshot<Duration>>,
 }
 
-impl<T: Eq + Hash + Display + Send + Clone> Snapshot<T> {
+impl<T: Eq + Hash + Send + Clone> Snapshot<T> {
     /// Create a new Snapshot from the given count, gauage, histogram, and percentiles
     pub fn new(
         key: T,

@@ -1,4 +1,3 @@
-use std::fmt::Display;
 use std::hash::Hash;
 use std::time::Duration;
 
@@ -18,7 +17,7 @@ pub struct Sample<T> {
     pub value: SampleValue,
 }
 
-impl<T: Hash + Eq + Send + Display + Clone> Sample<T> {
+impl<T: Hash + Eq + Send + Clone> Sample<T> {
     fn new(key: T, value: SampleValue) -> Sample<T> {
         Sample { key, value }
     }

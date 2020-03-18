@@ -154,7 +154,7 @@ mod test {
     use super::*;
     #[test]
     fn client_test() {
-        let (c, mut collector) = Client::new_client_and_collector();
+        let (c, collector) = Client::new_client_and_collector();
         let req = Request::builder()
             .uri("https://badssl.com/")
             .body(Body::empty())

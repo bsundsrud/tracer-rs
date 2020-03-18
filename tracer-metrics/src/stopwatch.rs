@@ -1,5 +1,4 @@
 use crate::sample::Sample;
-use std::fmt::Display;
 use std::hash::Hash;
 use std::time::Instant;
 
@@ -23,7 +22,7 @@ impl Stopwatch {
     }
 
     /// Create a Sample for the given key from the elapsed duration
-    pub fn elapsed<T: Eq + Hash + Send + Display + Clone>(&self, key: T) -> Sample<T> {
+    pub fn elapsed<T: Eq + Hash + Send + Clone>(&self, key: T) -> Sample<T> {
         Sample::elapsed(key, self.start.elapsed())
     }
 }

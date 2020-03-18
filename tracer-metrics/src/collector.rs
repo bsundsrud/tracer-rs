@@ -50,7 +50,7 @@ where
 
 impl<T> Collector<T>
 where
-    T: Hash + Eq + Send + Display + Clone,
+    T: Hash + Eq + Send + Clone,
 {
     /// Create a new collector with zeroed counters, gauges, and histograms and with default percentiles.
     pub fn new() -> Collector<T> {
@@ -144,7 +144,7 @@ pub struct CollectorHandle<T> {
     sender: Sender<Sample<T>>,
 }
 
-impl<T: Hash + Eq + Send + Display + Clone> CollectorHandle<T> {
+impl<T: Hash + Eq + Send + Clone> CollectorHandle<T> {
     pub fn stopwatch(&self) -> Stopwatch {
         Stopwatch::new()
     }
